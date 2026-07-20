@@ -21,22 +21,22 @@ pros::MotorGroup rightMotors({19, 11, 17}, pros::MotorGearset::green);
 pros::Motor liftLeft(12);
 pros::Motor liftRight(-2);
 pros::Motor claw(-3);
-pros::Motor arm(16);
+pros::Motor arm(13);
 pros::Imu imu(21);
 
 pros::Rotation horizontalEnc(20);
-pros::Rotation verticalEnc(15);
+pros::Rotation verticalEnc(-18);
 
 // single lift rotation sensor (DR4B sides are mechanically linked, so one sensor tracks both)
-pros::Rotation liftRot(-13);
+pros::Rotation liftRot(-16);
 
 lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_2, 0);
 
 lemlib::Drivetrain drivetrain(&leftMotors, &rightMotors, 14,
                               lemlib::Omniwheel::OLD_325, 333, 8);
 
-lemlib::ControllerSettings linearController(6, 0, 7, 3, 1, 100, 3, 500, 10);
-lemlib::ControllerSettings angularController(3.2, 0, 20, 3, 1, 100, 3, 500, 0);
+lemlib::ControllerSettings linearController(7, 0, 18, 3, 1, 100, 3, 500, 10);
+lemlib::ControllerSettings angularController(2.1, 0, 11, 3, 1, 100, 3, 500, 0);
 
 lemlib::OdomSensors sensors(&vertical, nullptr, nullptr, nullptr, &imu);
 
@@ -47,8 +47,8 @@ lemlib::Chassis chassis(drivetrain, linearController, angularController, sensors
 
 // ===== LIFT PID SETUP =====
 // TUNE THESE VALUES:
-lemlib::PID liftPID(1.8, 0, 0.08, 0, true); // kP, kI, kD  <-- TUNE kP and kD here
-double liftKG = 6.0;      // gravity feedforward            <-- TUNE THIS (2nd)
+lemlib::PID liftPID(1.375, 0., 0.1, 0, true); // kP, kI, kD  <-- TUNE kP and kD here
+double liftKG = 6.0;      // gravity feedforward            <-- TUNE THIS
 double liftSlewRate = 8;  // smoothness (lower = smoother)  <-- TUNE THIS (last)
 
 double liftTarget = 0;    // current target angle, degrees
@@ -60,17 +60,55 @@ bool liftPIDEnabled = false; // false = manual driver control, true = PID active
 // Ratio between the rotation sensor and the actual lift arm.
 // Example: if the sensor spins 2 full rotations for every 1 rotation of the arm, this is 2.0
 // If the sensor spins slower than the arm (e.g. sensor rotates 0.5x for every 1x arm), this is 0.5
-const double LIFT_GEAR_RATIO = 0.8; // <-- SET THIS to your actual ratio
+const double LIFT_GEAR_RATIO = 0.71428571428; // <-- SET THIS to your actual ratio
 
 double getLiftAngle() {
-    double sensorDeg = liftRot.get_position() / 100.0; // raw sensor reading
-    double armDeg = sensorDeg / LIFT_GEAR_RATIO;         // convert to true arm angle
-    if (armDeg > 180.0) armDeg -= 360.0; // wraparound fix, still needed
+    double sensorDeg = liftRot.get_position() / 100.0; // raw sensor reading, 0-360
+    if (sensorDeg > 180.0) sensorDeg -= 360.0; // unwrap at the RAW sensor level first
+    double armDeg = sensorDeg / LIFT_GEAR_RATIO; // THEN scale to true arm angle
     return armDeg;
 }
 
 void setLiftTarget(double angleDeg) {
     liftTarget = angleDeg;
+}
+
+// ===== CALIBRATION MODEL =====
+// This quartic was fit from real test data: for a given COMMANDED target,
+// it predicts the ACTUAL angle the lift settles at (due to PID steady-state error).
+// actualAngle = f(commandedAngle)
+double liftCalibrationModel(double commandedDeg) {
+    double x = commandedDeg;
+    return (-1.602e-7) * pow(x, 4)
+         + (9.12058e-5) * pow(x, 3)
+         - (1.72986e-2) * pow(x, 2)
+         + 2.1156 * x
+         - 20.78015;
+}
+
+// Inverts the calibration model via binary search: given the REAL angle you want,
+// finds the commanded target that actually produces it.
+double solveForCommandedTarget(double desiredActualAngle) {
+    double lo = 0.0;
+    double hi = 244.37; // measured max height in angle
+
+    for (int i = 0; i < 50; i++) {
+        double mid = (lo + hi) / 2.0;
+        double predictedActual = liftCalibrationModel(mid);
+        if (predictedActual < desiredActualAngle) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return (lo + hi) / 2.0;
+}
+
+// Use this instead of setLiftTarget() when you want the REAL angle to be accurate,
+// e.g. setLiftTargetCalibrated(90) internally commands ~96.02 to actually reach 90.
+void setLiftTargetCalibrated(double desiredActualAngle) {
+    double correctedCommand = solveForCommandedTarget(desiredActualAngle);
+    setLiftTarget(correctedCommand);
 }
 
 void waitUntilLiftAt(double targetAngle, double tolerance = 3.0) {
@@ -117,6 +155,7 @@ void initialize() {
     chassis.calibrate();
     liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);   // keep HOLD — fine alongside kG
     liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    liftRot.reset_position(); 
     pros::Task liftTaskHandle(liftTask);
     arm.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
     arm.tare_position();
@@ -196,9 +235,10 @@ void moveArmAuton(double targetAngle) {
 }
 
 void autonomous() {
-    // ===== TUNING TEST BLOCK — delete once liftKG/kP/kD/slew are dialed in =====
+    //244.37 is max height in angleacc
+    // ===== TUNING TEST BLOCK — delete once kP/kD/slew are dialed in =====
     enableLiftPID();
-    setLiftTarget(90); // change this to whatever angle you're testing
+    setLiftTargetCalibrated(122); // change this to whatever REAL angle you're testing
     while (true) { pros::delay(20); }
     // ===== END TEST BLOCK =====
 
