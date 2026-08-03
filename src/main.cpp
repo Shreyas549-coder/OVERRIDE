@@ -237,10 +237,70 @@ void moveArmAuton(double targetAngle) {
 void autonomous() {
     //244.37 is max height in angleacc
     // ===== TUNING TEST BLOCK — delete once kP/kD/slew are dialed in =====
+    /**/
+    /*
     enableLiftPID();
     setLiftTargetCalibrated(122); // change this to whatever REAL angle you're testing
     while (true) { pros::delay(20); }
+    */
     // ===== END TEST BLOCK =====
+
+    chassis.setPose(0,0,180);
+
+    // changing roller
+    chassis.moveToPoint(0, 1.5, 500, {.forwards=false});
+    chassis.moveToPoint(0, 0, 500);
+    chassis.moveToPoint(0, 1.5, 500, {.forwards=false});
+    chassis.moveToPoint(0, 0, 500);
+
+    //score preload
+    chassis.moveToPose(52.692, 60.057, 90, 1500, {.forwards=false, .maxSpeed=67});
+
+    // first pin
+    chassis.moveToPose(84.42, -19.83, 35, 1500, {.maxSpeed=67});
+    chassis.moveToPoint(111.616, -56.091, 1000, {.maxSpeed=15});
+    chassis.turnToHeading(90, 500);
+    chassis.moveToPoint(112.749, -105.383, 1500, {.maxSpeed=67});
+
+    // second toggle 
+    chassis.moveToPose(137.678, -68.556, 180, 1000, {.forwards=false});
+    chassis.turnToHeading(0, 500);
+    chassis.moveToPose(172.239, -170.54, 90, 1000, {.maxSpeed=90});
+
+    //second pin
+    chassis.moveToPose(63.457, -134.279, 45, 1500, {.forwards=false, .maxSpeed=67});
+    chassis.moveToPoint(51.842, -116.998, 1000, { .forwards=false, .maxSpeed=15});
+    chassis.turnToHeading(0, 500);
+    chassis.moveToPoint(105.383, -117.281, 1500, {.maxSpeed=67});
+
+    //loader pin #3
+    chassis.moveToPose(4.533, -147.31, 0, 15000, {.forwards=false, .maxSpeed=67});
+    chassis.moveToPose(110.482, -120.114, -45, 1500, {.maxSpeed=67});
+
+    //loader pin #4
+    chassis.moveToPose(4.533, -147.31, 0, 15000, {.forwards=false, .maxSpeed=67});
+    chassis.moveToPose(110.482, -120.114, -45, 1500, {.maxSpeed=67});
+
+    //loader pin #5
+    chassis.moveToPose(4.533, -147.31, 0, 15000, {.forwards=false, .maxSpeed=67});
+    chassis.moveToPose(53.258, -62.89, -90, 1500, {.maxSpeed=67});
+
+    //loader pin #6
+    chassis.moveToPose(4.533, -147.31, 0, 15000, {.forwards=false, .maxSpeed=67});
+    chassis.moveToPose(53.258, -62.89, -90, 1500, {.maxSpeed=67});
+
+    //loader pin #7
+    chassis.moveToPose(4.533, -147.31, 0, 15000, {.forwards=false, .maxSpeed=67});
+    chassis.moveToPose(53.258, -62.89, -90, 1500, {.maxSpeed=67});
+
+    //loader pin #8
+    chassis.moveToPose(4.533, -147.31, 0, 15000, {.forwards=false, .maxSpeed=67});
+    chassis.moveToPose(53.258, -62.89, -90, 1500, {.maxSpeed=67});
+    
+    //loader pin #9
+    chassis.moveToPose(4.533, -147.31, 0, 15000, {.forwards=false, .maxSpeed=67});
+    chassis.moveToPose(165.44, -4.533, -45, 3000);
+    
 
     /*
     chassis.setPose(0,0,0);
