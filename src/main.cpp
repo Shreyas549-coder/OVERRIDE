@@ -21,14 +21,14 @@ pros::MotorGroup rightMotors({19, 11, 17}, pros::MotorGearset::green);
 pros::Motor liftLeft(12);
 pros::Motor liftRight(-2);
 pros::Motor claw(-3);
-pros::Motor arm(13);
+pros::Motor arm(16);
 pros::Imu imu(21);
 
 pros::Rotation horizontalEnc(20);
 pros::Rotation verticalEnc(-18);
 
 // single lift rotation sensor (DR4B sides are mechanically linked, so one sensor tracks both)
-pros::Rotation liftRot(-16);
+pros::Rotation liftRot(5);
 
 lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_2, 0);
 
@@ -197,7 +197,7 @@ const double SLOW_ZONE_DELTA = 20.0;
 const double HOLD_ZONE_DELTA = 5.0;
 const int32_t MAX_SPEED = 9000;
 const int32_t APPROACH_SPEED = 2500;
-const int32_t GENTLE_HOLD = 1500;
+const int32_t GENTLE_HOLD = 3000;
 
 void moveArmAuton(double targetAngle) {
     while (true) {
@@ -337,7 +337,7 @@ void opcontrol() {
     const double HOLD_ZONE_ANGLE = 85.0;
     const int32_t MAX_SPEED = 9000;
     const int32_t APPROACH_SPEED = 2500;
-    const int32_t GENTLE_HOLD = 1000;
+    const int32_t GENTLE_HOLD = 3000;
 
     while (true) {
         int leftY = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
