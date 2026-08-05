@@ -197,7 +197,7 @@ const double SLOW_ZONE_DELTA = 20.0;
 const double HOLD_ZONE_DELTA = 5.0;
 const int32_t MAX_SPEED = 9000;
 const int32_t APPROACH_SPEED = 2500;
-const int32_t GENTLE_HOLD = 1000;
+const int32_t GENTLE_HOLD = 1500;
 
 void moveArmAuton(double targetAngle) {
     while (true) {
