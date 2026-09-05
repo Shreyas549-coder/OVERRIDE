@@ -246,24 +246,24 @@ void autonomous() {
     */
     // ===== END TEST BLOCK =====
 
-    chassis.setPose(0,0,180);
+    chassis.setPose(0,0,0);
     claw.move_voltage(12000);
     //setLiftTargetCalibrated(80);
     //claw.move_voltage(12000);
     //moveArmAuton(-90);
 
     // changing roller
-    chassis.moveToPoint(0, 3, 500, {.forwards=false, .minSpeed=33});
-    chassis.moveToPoint(0, 0, 500, {.minSpeed=33});
+    chassis.moveToPoint(0, 3, 500, {.minSpeed=33});
+    chassis.moveToPoint(0, 0, 500, {.forwards=false, .minSpeed=33});
     pros::delay(500);
-    chassis.moveToPoint(0, 3, 500, {.forwards=false, .minSpeed=33});
-    chassis.moveToPoint(0, 0, 500, {.minSpeed=33});
+    chassis.moveToPoint(0, 3, 500, {.minSpeed=33});
+    chassis.moveToPoint(0, 0, 500, {.forwards=false, .minSpeed=33});
     pros::delay(500);
 
     //score preload
     moveArmAuton(-90);
     setLiftTargetCalibrated(100);
-    chassis.moveToPose(-24, 13.5, 90, 3000, {.forwards=false, .lead=0.7 ,.maxSpeed=80, .minSpeed=20});
+    chassis.moveToPose(-24, 13.5, 90, 3000, {.lead=0.7 ,.maxSpeed=80, .minSpeed=20});
     chassis.waitUntilDone();
     setLiftTargetCalibrated(0);
     pros::delay(500);
@@ -272,16 +272,18 @@ void autonomous() {
 
 /*
     // first pin
-    chassis.moveToPose(23, 39, 42, 5000, {.maxSpeed=80}); 
-    chassis.turnToHeading(-90, 500);
-    chassis.moveToPose(36, 40, -90, 5000, {.forwards=false, .maxSpeed=80});
+    chassis.moveToPose(23, 39, 42, 5000, {.forwards=false, .maxSpeed=80}); 
+    chassis.turnToHeading(90, 500);
+    chassis.moveToPose(36, 40, -90, 5000, {.maxSpeed=80});
 
     // second toggle 
-    chassis.moveToPose(65.7, 64.5, 90, 5000, {.lead=0.8, .maxSpeed=90});
+    chassis.moveToPose(65.7, 64.5, 90, 5000, {.forwards=false, .lead=0.8, .maxSpeed=90});
 
     //second pin
+    chassis.moveToPoint(62, 36.5, 15000, { .maxSpeed=80});
     chassis.moveToPose(62, 36.5, 0, 15000, {.forwards=false, .lead=0.2, .maxSpeed=80});
     chassis.moveToPose(45, 8, 45, 15000, {.forwards=false, .lead=0.8, .maxSpeed=80});
+    chassis.turnToHeading(0, 5000, {.maxSpeed=80});
     chassis.moveToPose(47.5, 22.8, 0, 15000, {.maxSpeed=80});
 
     //loader pin #3
