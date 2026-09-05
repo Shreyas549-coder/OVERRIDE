@@ -18,8 +18,8 @@ pros::MotorGroup leftMotors({-9, -8, -1},
                             pros::MotorGearset::green);
 pros::MotorGroup rightMotors({19, 11, 17}, pros::MotorGearset::green);
 
-pros::Motor liftLeft(12);
-pros::Motor liftRight(-2);
+pros::Motor liftLeft(-2);
+pros::Motor liftRight(12);
 pros::Motor claw(-3);
 pros::Motor arm(16);
 pros::Imu imu(21);
@@ -28,7 +28,7 @@ pros::Rotation horizontalEnc(20);
 pros::Rotation verticalEnc(-18);
 
 // single lift rotation sensor (DR4B sides are mechanically linked, so one sensor tracks both)
-pros::Rotation liftRot(5);
+pros::Rotation liftRot(13);
 
 lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_2, 0);
 
@@ -238,25 +238,39 @@ void autonomous() {
     //244.37 is max height in angleacc
     // ===== TUNING TEST BLOCK — delete once kP/kD/slew are dialed in =====
     /**/
-    /*
+    
     enableLiftPID();
+    /*
     setLiftTargetCalibrated(122); // change this to whatever REAL angle you're testing
     while (true) { pros::delay(20); }
     */
     // ===== END TEST BLOCK =====
 
     chassis.setPose(0,0,180);
-/*
+    claw.move_voltage(12000);
+    //setLiftTargetCalibrated(80);
+    //claw.move_voltage(12000);
+    //moveArmAuton(-90);
+
     // changing roller
-    chassis.moveToPoint(0, 1.5, 500, {.forwards=false, .minSpeed=33});
+    chassis.moveToPoint(0, 3, 500, {.forwards=false, .minSpeed=33});
     chassis.moveToPoint(0, 0, 500, {.minSpeed=33});
-    chassis.moveToPoint(0, 1.5, 500, {.forwards=false, .minSpeed=33});
+    pros::delay(500);
+    chassis.moveToPoint(0, 3, 500, {.forwards=false, .minSpeed=33});
     chassis.moveToPoint(0, 0, 500, {.minSpeed=33});
-*/
+    pros::delay(500);
+
     //score preload
-    chassis.moveToPose(-17, 15.5, 90, 5000, {.forwards=false, .lead=0.8 ,.maxSpeed=80});
+    moveArmAuton(-90);
+    setLiftTargetCalibrated(100);
+    chassis.moveToPose(-24, 13.5, 90, 3000, {.forwards=false, .lead=0.7 ,.maxSpeed=80, .minSpeed=20});
+    chassis.waitUntilDone();
+    setLiftTargetCalibrated(0);
+    pros::delay(500);
+    claw.move_voltage(-12000);
 
 
+/*
     // first pin
     chassis.moveToPose(23, 39, 42, 5000, {.maxSpeed=80}); 
     chassis.turnToHeading(-90, 500);
@@ -297,7 +311,7 @@ void autonomous() {
     //loader pin #9
     chassis.moveToPose(50.5, -2.65, 0, 15000, {.forwards=false, .maxSpeed=80});
     //chassis.moveToPose(165.44, -4.533, -45, 3000);
-    
+    */
     
 
     /*
@@ -345,11 +359,11 @@ void opcontrol() {
         pros::delay(10);
 
         if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
-            liftLeft.move_voltage(4000);
-            liftRight.move_voltage(4000);
+            liftLeft.move_voltage(9000);
+            liftRight.move_voltage(9000);
         } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
-            liftLeft.move_voltage(-4000);
-            liftRight.move_voltage(-4000);
+            liftLeft.move_voltage(-9000);
+            liftRight.move_voltage(-9000);
         } else {
             liftLeft.brake();
             liftRight.brake();
