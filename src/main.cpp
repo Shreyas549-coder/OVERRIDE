@@ -9,6 +9,8 @@
 #include "pros/rotation.hpp"
 #include "pros/rtos.hpp"
 #include "pros/error.h"
+#include "pros/distance.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -22,7 +24,7 @@
 //   2 = PID step test, jump between preset angles      (do this second)
 // Set back to 0 when you are done.
 // =====================================================================
-#define LIFT_TUNE_MODE 2
+#define LIFT_TUNE_MODE 0
 
 
 
@@ -37,7 +39,7 @@ pros::Controller controller(pros::E_CONTROLLER_MASTER);
 pros::MotorGroup leftMotors({-9, -8, -1}, pros::MotorGearset::green);
 pros::MotorGroup rightMotors({19, 11, 17}, pros::MotorGearset::green);
 
-
+pros::Distance rightDistance(15);
 
 
 pros::Motor liftLeft(-2);
@@ -158,7 +160,22 @@ struct LiftPID {
 };
 
 // kP, kI, kD, windupRange, integral cap
-LiftPID liftPID(0.5, 0.0, 0.0, 10, 20);
+// kP 1.6 lands accurately, so it stays. kD starts at kP/10 and is the real cure
+// for the lift arriving hard: it is velocity damping, pushing back in proportion
+// to how fast the lift is actually moving, which a command limit cannot do.
+LiftPID liftPID(1.6, 0.0, 0.16, 10, 20);
+
+
+
+
+// How much of the downward command to actually use. Descending is gravity
+// assisted, so the full negative command is never needed and only makes the
+// arrival harder. 1.0 is the old behaviour, 0.7 is roughly 70 percent.
+//
+// Worth knowing what this can and cannot do: it caps how hard the motors pull
+// the lift down, but it cannot slow a lift that is already falling under its own
+// weight. Braking a fall needs a POSITIVE command, which is kD's job, not this.
+const double LIFT_DOWN_SCALE = 0.7;
 
 
 
@@ -423,6 +440,12 @@ void liftTask() {
            if (currentAngle >= LIFT_MAX && output > liftFFNow) output = liftFFNow;
            if (currentAngle <= LIFT_MIN && output < 0) output = 0;
 
+           // Coming down, gravity is already doing most of the work, so a full
+           // negative command just drops the lift onto its own stop. Scale the
+           // downward half only. The upward half and the feedforward that holds
+           // it in place are untouched.
+           if (output < 0) output *= LIFT_DOWN_SCALE;
+
            if (output > maxVoltage) output = maxVoltage;
            if (output < -maxVoltage) output = -maxVoltage;
 
@@ -471,7 +494,7 @@ void initialize() {
    while (true) {
        pros::lcd::print(0, "Lift: %.1f", liftAngleNow);
        pros::lcd::print(1, "Target: %.1f", liftTarget);
-       pros::lcd::print(2, "Err: %.1f", liftTarget - liftAngleNow);
+       pros::lcd::print(2, "X: %f", chassis.getPose().x); // x
        pros::lcd::print(3, "PID: %.1f", liftPIDNow);
        pros::lcd::print(4, "FF: %.1f   Out: %.1f", liftFFNow, liftLastOutput);
        pros::lcd::print(5, "Hold: %d  PIDon: %d", (int)liftTestHold, liftPIDEnabled ? 1 : 0);
@@ -590,34 +613,213 @@ void moveArmAuton(double targetAngle, int timeoutMs = 2000) {
 
 
 
+// =====================================================================
+// DISTANCE SENSOR ODOMETRY RESET
+// =====================================================================
+//
+// Corrects ONE axis of the odometry pose by measuring a wall whose field
+// coordinate you already know, using the right hand sensor on port 15.
+//
+// Three things have to be accounted for or the "correction" leaves odom worse
+// than not touching it:
+//
+//   1. Robot heading. The sensor turns with the robot, so the beam direction in
+//      FIELD coordinates is the robot heading plus the mounting angle.
+//   2. Mounting angle. Right facing is 90 degrees clockwise of robot forward.
+//   3. Mounting offset. The sensor does not sit at the tracking center, so its
+//      field position is the robot pose plus that offset rotated into the field
+//      frame. Skipping this bakes an error into every reset, and because the
+//      offset rotates with the robot the error changes sign as it turns, which
+//      is nastier than a fixed bias.
+//
+// It also handles the beam striking the wall at an angle, which is the part that
+// usually gets missed. A sensor 10 inches from a wall reads 10 only when it is
+// square to it; at 30 degrees off it reads 11.5. Projecting the beam vector onto
+// the wall normal takes care of that on its own.
+//
+// ASSUMPTION worth being explicit about: this trusts the heading and corrects
+// only position. One distance sensor cannot tell a heading error apart from a
+// position error, so if the IMU has drifted this will confidently write in a
+// wrong answer. Guard rails below reject the readings most likely to be junk,
+// but they cannot catch a bad heading.
+//
+// Usage, e.g. squaring up on the right wall at x = 72 before a scoring run:
+//     DistanceFix fix = resetOdomFromWall(Wall::PlusX, 72.0);
+//     if (!fix.ok) { /* fix.reason says why, odom left untouched */ }
+
+
+// ---- MEASURE THESE ON THE ROBOT, they are guesses ----
+// Offsets from the TRACKING CENTER, the point odom actually reports, in inches.
+const double DIST_OFFSET_FORWARD = 0.0;   // + toward the front of the robot
+const double DIST_OFFSET_RIGHT   = 6.0;   // + toward the right of the robot
+// Mounting angle relative to robot forward, degrees clockwise.
+// 90 means pointing straight out the right side.
+const double DIST_SENSOR_ANGLE   = 90.0;
+
+// Which wall face the beam is pointed at. Names are the direction of the wall's
+// outward axis, so PlusX is the wall you reach by driving toward +x.
+enum class Wall { PlusX, MinusX, PlusY, MinusY };
+
+struct DistanceFix {
+   bool ok;
+   double measured;      // where the sensor put the wall, in field coordinates
+   double correction;    // how far the pose was moved, 0 when rejected
+   double spread;        // inches between the closest and furthest sample
+   const char* reason;   // why it was rejected
+};
+
+
+// Anything slower than this counts as stopped, in RPM.
+const double DIST_STILL_RPM = 5.0;
+
+// This reset is only meant to run with the robot stationary. If the drivetrain
+// is still turning, the samples are smeared across a moving vantage point and
+// the pose is shifting out from under the correction as it is applied.
+// Checks the first motor of each side, which is enough to catch a chassis that
+// is still coasting or a motion that was never waited on.
+static bool driveIsStopped() {
+   return std::fabs(leftMotors.get_actual_velocity()) < DIST_STILL_RPM &&
+          std::fabs(rightMotors.get_actual_velocity()) < DIST_STILL_RPM;
+}
+
+
+// Median plus spread. Because the robot is stationary the samples SHOULD agree
+// closely, so how much they disagree is real information: a wide spread means
+// the beam is catching an edge, a gap, or something reflective. A median on its
+// own would quietly hide exactly that, which is why the spread comes back too.
+static std::int32_t distanceMedianMM(int samples, std::int32_t& spreadMM) {
+   std::int32_t v[15];
+   if (samples > 15) samples = 15;
+   if (samples < 1) samples = 1;
+   for (int i = 0; i < samples; i++) {
+       v[i] = rightDistance.get_distance();
+       if (i + 1 < samples) pros::delay(10);
+   }
+   std::sort(v, v + samples);
+   spreadMM = v[samples - 1] - v[0];
+   return v[samples / 2];
+}
+
+
+// Samples default to 9 rather than a handful, because standing still costs
+// nothing but 80 ms and more samples make both the median and the spread mean
+// something.
+DistanceFix resetOdomFromWall(Wall wall, double wallCoord,
+                              double maxCorrection = 6.0,
+                              int minConfidence = 40,
+                              int samples = 9,
+                              double maxSpreadIn = 0.6) {
+   DistanceFix r{false, 0.0, 0.0, 0.0, "ok"};
+
+   if (!driveIsStopped()) {
+       r.reason = "robot still moving, call waitUntilDone first";
+       return r;
+   }
+
+   std::int32_t spreadMM = 0;
+   std::int32_t mm = distanceMedianMM(samples, spreadMM);
+   r.spread = spreadMM / 25.4;
+
+   if (mm == PROS_ERR) { r.reason = "sensor error, check port 15"; return r; }
+   if (mm >= 9999) { r.reason = "nothing in range"; return r; }
+   // Confidence is only meaningful past 200 mm, per the PROS docs.
+   if (mm > 200 && rightDistance.get_confidence() < minConfidence) {
+       r.reason = "low confidence"; return r;
+   }
+   // Standing still, a flat wall reads within a few mm. Disagreement past this
+   // means the beam is not on a flat wall, so the median is not worth trusting.
+   if (r.spread > maxSpreadIn) {
+       r.reason = "samples disagree, beam not on a flat wall";
+       return r;
+   }
+
+   const double DEG = 3.14159265358979323846 / 180.0;
+   double d = mm / 25.4;   // the sensor reports millimetres, odom is in inches
+
+   lemlib::Pose p = chassis.getPose();
+
+   // LemLib heading is a compass bearing: 0 is +y, clockwise positive.
+   // So forward is (sin, cos) and right is that turned 90 clockwise.
+   double th = p.theta * DEG;
+   double fx = std::sin(th),  fy = std::cos(th);
+   double rx = std::cos(th),  ry = -std::sin(th);
+
+   // (1) and (3): where the sensor actually is, in field coordinates
+   double sx = p.x + fx * DIST_OFFSET_FORWARD + rx * DIST_OFFSET_RIGHT;
+   double sy = p.y + fy * DIST_OFFSET_FORWARD + ry * DIST_OFFSET_RIGHT;
+
+   // (2): where the beam is pointed, in field coordinates
+   double bth = (p.theta + DIST_SENSOR_ANGLE) * DEG;
+   double bx = std::sin(bth), by = std::cos(bth);
+
+   // where the beam says it struck
+   double hx = sx + bx * d;
+   double hy = sy + by * d;
+
+   bool xAxis = (wall == Wall::PlusX || wall == Wall::MinusX);
+   double along = xAxis ? bx : by;   // beam component along the wall normal
+   double hit = xAxis ? hx : hy;
+
+   // A beam nearly parallel to the wall carries almost no information about that
+   // axis, and a small heading error there turns into a huge position error. It
+   // also has to be pointed AT the named wall, not away from it. 0.5 is 60
+   // degrees off perpendicular, which is about as oblique as is still useful.
+   double towardWall = (wall == Wall::PlusX || wall == Wall::PlusY) ? along : -along;
+   if (towardWall < 0.5) { r.reason = "beam too oblique or facing away"; return r; }
+
+   double correction = wallCoord - hit;
+
+   // A big correction almost always means the beam found a robot or a game
+   // element rather than the wall. Refuse it rather than teleport the pose.
+   if (std::fabs(correction) > maxCorrection) {
+       r.measured = hit;
+       r.reason = "correction too large, probably not the wall";
+       return r;
+   }
+
+   if (xAxis) chassis.setPose(p.x + correction, p.y, p.theta);
+   else chassis.setPose(p.x, p.y + correction, p.theta);
+
+   r.ok = true;
+   r.measured = hit;
+   r.correction = correction;
+   return r;
+}
+
+
 void autonomous() {
    enableLiftPID();
 
 
 
 
-   chassis.setPose(0, 0, 180);
+   chassis.setPose(0, -1, 180);
    claw.move_voltage(12000);
 
 
 
 
    // changing roller
-   chassis.moveToPoint(0, 3, 500, {.forwards = false, .minSpeed = 33});
-   chassis.moveToPoint(0, 0, 500, {.minSpeed = 33});
+   chassis.moveToPoint(0, 7, 500, {.forwards=false, .minSpeed = 33});
+
+   moveArmAuton(90);
+   chassis.turnToHeading(0, 750);
+
+   chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
    pros::delay(500);
-   chassis.moveToPoint(0, 3, 500, {.forwards = false, .minSpeed = 33});
-   chassis.moveToPoint(0, 0, 500, {.minSpeed = 33});
-   pros::delay(500);
+   //chassis.moveToPoint(0, 3, 500, {.minSpeed = 33});
+   //chassis.moveToPoint(0, 0, 500, {.forwards = false, .minSpeed = 33});
+   //pros::delay(500);
 
 
 
 
    // score preload
-   moveArmAuton(-90);
    setLiftTarget(100);
-   chassis.moveToPose(-24, 13.5, 90, 3000,
-                      {.forwards = false, .lead = 0.7, .maxSpeed = 80, .minSpeed = 20});
+   chassis.moveToPose(-24, 14, -90, 3000,
+                      {.lead = 0.8, .maxSpeed = 80, .minSpeed = 20});
+    
+   moveArmAuton(90);
    chassis.waitUntilDone();
 
 
@@ -632,32 +834,46 @@ void autonomous() {
 
 
 
-   chassis.moveToPoint(-24, 13.5, 500, {.forwards = false, .minSpeed = 33});
 
 
-
-
-   /*
+   
    // first pin
-   chassis.moveToPose(23, 39, 42, 5000, {.maxSpeed=80});
-   chassis.turnToHeading(-90, 500);
-   chassis.moveToPose(36, 40, -90, 5000, {.forwards=false, .maxSpeed=80});
+   setLiftTarget(0);
+   moveArmAuton(-90);
+   claw.move_voltage(12000);
+   chassis.moveToPoint(0, 17, 3000, {.forwards=false, .minSpeed=20, .earlyExitRange=5});
+   chassis.moveToPose(25, 41.5, -135, 5000, {.forwards=false, .lead=0.1, .maxSpeed=35});
+   pros::delay(1000);
+   chassis.turnToHeading(90, 500, {.maxSpeed=80});
+   moveArmAuton(90);
+   setLiftTarget(60);
+   chassis.moveToPose(36, 40, 90, 5000);
+   pros::delay(500);
+   setLiftTarget(0);
+
 
 
 
 
    // second toggle
-   chassis.moveToPose(65.7, 64.5, 90, 5000, {.lead=0.8, .maxSpeed=90});
+   chassis.moveToPose(24, 64, 180, 2000, {.forwards=false, .lead=0.6, .minSpeed=40, .earlyExitRange=4});
+   chassis.moveToPose(70, 59, -90, 5000, {.forwards=false, .lead=0.6, .minSpeed=35});
+   chassis.waitUntilDone();
+   //chassis.moveToPose(55.7, 59.5, -90, 5000, {.lead=0.8, .minSpeed=35});
+   //chassis.moveToPose(66.7, 59.5, -90, 5000, {.forwards=false, .minSpeed=35});
 
 
 
 
    // second pin
-   chassis.moveToPose(62, 36.5, 0, 15000, {.forwards=false, .lead=0.2, .maxSpeed=80});
-   chassis.moveToPose(45, 8, 45, 15000, {.forwards=false, .lead=0.8, .maxSpeed=80});
-   chassis.moveToPose(47.5, 22.8, 0, 15000, {.maxSpeed=80});
+   chassis.moveToPose(60, 64, 0, 5000, {.minSpeed=0.4});
+   moveArmAuton(-90);
+   chassis.moveToPose(60, 36.5, 0, 15000, {.forwards=false, .lead=0.2, .maxSpeed=80});
+   chassis.moveToPose(40, 5, 45, 15000, {.forwards=false, .lead=0.4, .maxSpeed=40});
+   moveArmAuton(90);
+   chassis.moveToPose(48, 33, 0, 15000, {.maxSpeed=80});
 
-
+/*
 
 
    // loader pin #3
