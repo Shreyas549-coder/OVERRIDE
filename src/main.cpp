@@ -785,7 +785,13 @@ DistanceFix resetOdomFromWall(Wall wall, double wallCoord,
    r.correction = correction;
    return r;
 }
-
+void resetAtLoader() {
+    // 1. Ensure the chassis has completely stopped
+    chassis.waitUntilDone();
+    
+    // 2. Perform distance reset against Wall::PlusX using our stored baseline
+    DistanceFix fix = resetOdomFromWall(Wall::PlusX, 72.0, 4.0);
+}
 
 void autonomous() {
    enableLiftPID();
@@ -869,19 +875,38 @@ void autonomous() {
 
 
    // second pin
+   claw.move_voltage(12000);
    chassis.moveToPose(60, 64, 0, 5000, {.minSpeed=0.4});
    moveArmAuton(-90);
    chassis.moveToPose(60, 36.5, 0, 15000, {.forwards=false, .lead=0.2, .maxSpeed=80});
    chassis.moveToPose(40, 5, 45, 15000, {.forwards=false, .lead=0.4, .maxSpeed=40});
+   setLiftTarget(60);
    moveArmAuton(90);
    chassis.moveToPose(48, 33, 0, 15000, {.maxSpeed=80});
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   waitUntilLiftAt(3.0, 1500);
+   claw.move_voltage(-12000);
+   pros::delay(300);
+
 
 /*
 
 
    // loader pin #3
+   claw.move_voltage(12000);
+   moveArmAuton(-90);
    chassis.moveToPose(58.5, -2.65, 0, 15000, {.forwards=false, .maxSpeed=80});
+   chassis.waitUntilDone();
+   resetAtLoader();
+   setLiftTarget(60);
+   moveArmAuton(90);
    chassis.moveToPose(47.5, 22.8, 0, 15000, {.maxSpeed=80});
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   waitUntilLiftAt(3.0, 1500);
+   claw.move_voltage(-12000);
+   pros::delay(300);
 
 
 
