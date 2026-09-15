@@ -495,8 +495,8 @@ void initialize() {
        pros::lcd::print(0, "Lift: %.1f", liftAngleNow);
        pros::lcd::print(1, "Target: %.1f", liftTarget);
        pros::lcd::print(2, "X: %f", chassis.getPose().x); // x
-       pros::lcd::print(3, "PID: %.1f", liftPIDNow);
-       pros::lcd::print(4, "FF: %.1f   Out: %.1f", liftFFNow, liftLastOutput);
+       pros::lcd::print(3, "Y: %f", chassis.getPose().y); // x
+       pros::lcd::print(4, "theta: %f", chassis.getPose().theta); // x
        pros::lcd::print(5, "Hold: %d  PIDon: %d", (int)liftTestHold, liftPIDEnabled ? 1 : 0);
        pros::lcd::print(6, "Raw: %d  Sen: %s",
                         (int)liftRot.get_position(), liftSensorOK ? "OK" : "BAD");
@@ -803,7 +803,7 @@ void autonomous() {
    chassis.moveToPoint(0, 7, 500, {.forwards=false, .minSpeed = 33});
 
    moveArmAuton(90);
-   chassis.turnToHeading(0, 750);
+   chassis.turnToHeading(0, 750, {.maxSpeed=60});
 
    chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
    pros::delay(500);
@@ -841,15 +841,18 @@ void autonomous() {
    setLiftTarget(0);
    moveArmAuton(-90);
    claw.move_voltage(12000);
-   chassis.moveToPoint(0, 17, 3000, {.forwards=false, .minSpeed=20, .earlyExitRange=5});
-   chassis.moveToPose(25, 41.5, -135, 5000, {.forwards=false, .lead=0.1, .maxSpeed=35});
+   chassis.moveToPoint(-3, 17, 3000, {.forwards=false, .minSpeed=20, .earlyExitRange=5});
+   chassis.turnToPoint(20, 34.95, 2000, {.forwards=false});
+   chassis.moveToPoint(20, 34.95, 5000, {.forwards=false, .maxSpeed=20});
    pros::delay(1000);
    chassis.turnToHeading(90, 500, {.maxSpeed=80});
    moveArmAuton(90);
    setLiftTarget(60);
-   chassis.moveToPose(36, 40, 90, 5000);
-   pros::delay(500);
+   chassis.moveToPose(36, 37, 90, 5000);
+   chassis.waitUntilDone();
    setLiftTarget(0);
+   pros::delay(500);
+   claw.move_voltage(-12000);
 
 
 
