@@ -40,11 +40,13 @@ pros::MotorGroup leftMotors({-9, -8, -1}, pros::MotorGearset::green);
 pros::MotorGroup rightMotors({19, 11, 17}, pros::MotorGearset::green);
 
 pros::Distance rightDistance(15);
+// Left distance sensor smart port.
+pros::Distance leftDistance(10);
 
 
 pros::Motor liftLeft(-2);
 pros::Motor liftRight(12);
-pros::Motor claw(-3);
+pros::Motor claw(3);
 pros::Motor arm(16);
 pros::Imu imu(21);
 
@@ -75,7 +77,7 @@ lemlib::Drivetrain drivetrain(&leftMotors, &rightMotors, 14,
 
 
 lemlib::ControllerSettings linearController(7, 0, 18, 3, 1, 100, 3, 500, 10);
-lemlib::ControllerSettings angularController(2.1, 0, 11, 3, 1, 100, 3, 500, 0);
+lemlib::ControllerSettings angularController(1, 0, 0.05, 3, 1, 100, 3, 500, 0);
 
 
 
@@ -562,10 +564,10 @@ void lift_DOWN(float time) {
 
 
 
-const double SLOW_ZONE_DELTA = 20.0;
+const double SLOW_ZONE_DELTA = 40.0;
 const double HOLD_ZONE_DELTA = 5.0;
-const int32_t MAX_SPEED = 9000;
-const int32_t APPROACH_SPEED = 2500;
+const int32_t MAX_SPEED = 12000;
+const int32_t APPROACH_SPEED = 5000;
 const int32_t GENTLE_HOLD = 3000;
 
 
@@ -651,10 +653,29 @@ void moveArmAuton(double targetAngle, int timeoutMs = 2000) {
 // ---- MEASURE THESE ON THE ROBOT, they are guesses ----
 // Offsets from the TRACKING CENTER, the point odom actually reports, in inches.
 const double DIST_OFFSET_FORWARD = 0.0;   // + toward the front of the robot
-const double DIST_OFFSET_RIGHT   = 6.0;   // + toward the right of the robot
+const double DIST_OFFSET_RIGHT   = 6.5;   // + toward the right of the robot
 // Mounting angle relative to robot forward, degrees clockwise.
 // 90 means pointing straight out the right side.
 const double DIST_SENSOR_ANGLE   = 90.0;
+
+// TODO: Measure the left sensor offsets from the tracking center, in inches.
+const double LEFT_DIST_OFFSET_FORWARD = 0.0;
+const double LEFT_DIST_OFFSET_RIGHT = -6.5; // negative means left; provisional
+const double LEFT_DIST_SENSOR_ANGLE = -90.0;
+// TODO: Set the negative-Y wall coordinate in YOUR odometry frame.
+// NAN disables this reset until configured; -72 only fits a field-centered origin.
+const double LOADER2_WALL_Y = NAN;
+
+// Sensor mounting geometry relative to the tracking center.
+struct DistanceMount {
+    double forward;
+    double right;
+    double angle;
+};
+const DistanceMount RIGHT_DISTANCE_MOUNT{
+    DIST_OFFSET_FORWARD, DIST_OFFSET_RIGHT, DIST_SENSOR_ANGLE};
+const DistanceMount LEFT_DISTANCE_MOUNT{
+    LEFT_DIST_OFFSET_FORWARD, LEFT_DIST_OFFSET_RIGHT, LEFT_DIST_SENSOR_ANGLE};
 
 // Which wall face the beam is pointed at. Names are the direction of the wall's
 // outward axis, so PlusX is the wall you reach by driving toward +x.
@@ -687,12 +708,16 @@ static bool driveIsStopped() {
 // closely, so how much they disagree is real information: a wide spread means
 // the beam is catching an edge, a gap, or something reflective. A median on its
 // own would quietly hide exactly that, which is why the spread comes back too.
-static std::int32_t distanceMedianMM(int samples, std::int32_t& spreadMM) {
+static std::int32_t distanceMedianMM(pros::Distance& sensor, int samples, std::int32_t& spreadMM) {
    std::int32_t v[15];
    if (samples > 15) samples = 15;
    if (samples < 1) samples = 1;
    for (int i = 0; i < samples; i++) {
-       v[i] = rightDistance.get_distance();
+       v[i] = sensor.get_distance();
+       if (v[i] == PROS_ERR || v[i] <= 0 || v[i] >= 9999) {
+           spreadMM = 0;
+           return v[i];
+       }
        if (i + 1 < samples) pros::delay(10);
    }
    std::sort(v, v + samples);
@@ -704,7 +729,9 @@ static std::int32_t distanceMedianMM(int samples, std::int32_t& spreadMM) {
 // Samples default to 9 rather than a handful, because standing still costs
 // nothing but 80 ms and more samples make both the median and the spread mean
 // something.
-DistanceFix resetOdomFromWall(Wall wall, double wallCoord,
+static DistanceFix resetOdomFromSensor(pros::Distance& sensor,
+                              double offsetForward, double offsetRight,
+                              double sensorAngle, Wall wall, double wallCoord,
                               double maxCorrection = 6.0,
                               int minConfidence = 40,
                               int samples = 9,
@@ -717,13 +744,14 @@ DistanceFix resetOdomFromWall(Wall wall, double wallCoord,
    }
 
    std::int32_t spreadMM = 0;
-   std::int32_t mm = distanceMedianMM(samples, spreadMM);
+   std::int32_t mm = distanceMedianMM(sensor, samples, spreadMM);
    r.spread = spreadMM / 25.4;
 
-   if (mm == PROS_ERR) { r.reason = "sensor error, check port 15"; return r; }
+   if (mm == PROS_ERR || mm <= 0) { r.reason = "sensor error, check distance sensor port"; return r; }
    if (mm >= 9999) { r.reason = "nothing in range"; return r; }
    // Confidence is only meaningful past 200 mm, per the PROS docs.
-   if (mm > 200 && rightDistance.get_confidence() < minConfidence) {
+   const auto confidence = sensor.get_confidence();
+   if (mm > 200 && (confidence == PROS_ERR || confidence < minConfidence)) {
        r.reason = "low confidence"; return r;
    }
    // Standing still, a flat wall reads within a few mm. Disagreement past this
@@ -745,11 +773,11 @@ DistanceFix resetOdomFromWall(Wall wall, double wallCoord,
    double rx = std::cos(th),  ry = -std::sin(th);
 
    // (1) and (3): where the sensor actually is, in field coordinates
-   double sx = p.x + fx * DIST_OFFSET_FORWARD + rx * DIST_OFFSET_RIGHT;
-   double sy = p.y + fy * DIST_OFFSET_FORWARD + ry * DIST_OFFSET_RIGHT;
+   double sx = p.x + fx * offsetForward + rx * offsetRight;
+   double sy = p.y + fy * offsetForward + ry * offsetRight;
 
    // (2): where the beam is pointed, in field coordinates
-   double bth = (p.theta + DIST_SENSOR_ANGLE) * DEG;
+   double bth = (p.theta + sensorAngle) * DEG;
    double bx = std::sin(bth), by = std::cos(bth);
 
    // where the beam says it struck
@@ -785,45 +813,73 @@ DistanceFix resetOdomFromWall(Wall wall, double wallCoord,
    r.correction = correction;
    return r;
 }
-void resetAtLoader() {
-    // 1. Ensure the chassis has completely stopped
-    chassis.waitUntilDone();
-    
-    // 2. Perform distance reset against Wall::PlusX using our stored baseline
-    DistanceFix fix = resetOdomFromWall(Wall::PlusX, 72.0, 4.0);
+// Explicit sensor and mounting geometry for resets using either sensor.
+DistanceFix resetOdomFromWall(pros::Distance& sensor, const DistanceMount& mount,
+                              Wall wall, double wallCoord,
+                              double maxCorrection = 6.0,
+                              int minConfidence = 40,
+                              int samples = 9,
+                              double maxSpreadIn = 0.6) {
+    return resetOdomFromSensor(sensor, mount.forward, mount.right, mount.angle,
+                              wall, wallCoord, maxCorrection, minConfidence,
+                              samples, maxSpreadIn);
 }
+
+// Existing right-side API and defaults are preserved.
+DistanceFix resetOdomFromWall(Wall wall, double wallCoord,
+                              double maxCorrection = 6.0,
+                              int minConfidence = 40,
+                              int samples = 9,
+                              double maxSpreadIn = 0.6) {
+    return resetOdomFromSensor(rightDistance, DIST_OFFSET_FORWARD,
+                              DIST_OFFSET_RIGHT, DIST_SENSOR_ANGLE, wall,
+                              wallCoord, maxCorrection, minConfidence,
+                              samples, maxSpreadIn);
+}
+
+// Call while stopped, with the selected sensor facing the +X wall.
+// Always pass the matching mount so the correct offset and beam angle are used.
+DistanceFix resetAtGoal1(pros::Distance& sensor, const DistanceMount& mount) {
+    return resetOdomFromWall(sensor, mount, Wall::PlusX, 18, 4.0);
+}
+
+// Same wall, baseline, and correction limit as goal 1.
+DistanceFix resetAtGoal2(pros::Distance& sensor, const DistanceMount& mount) {
+    return resetOdomFromWall(sensor, mount, Wall::PlusX, 18, 4.0);
+}
+
 
 void autonomous() {
    enableLiftPID();
 
-
-
-
-   chassis.setPose(0, -1, 180);
+   chassis.setPose(0, 0, 180);
    claw.move_voltage(12000);
 
-
-
+   
 
    // changing roller
-   chassis.moveToPoint(0, 7, 500, {.forwards=false, .minSpeed = 33});
+   chassis.moveToPoint(0, 8, 500, {.forwards=false, .minSpeed = 33});
 
    moveArmAuton(90);
    chassis.turnToHeading(0, 750, {.maxSpeed=60});
 
    chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
    pros::delay(500);
+   chassis.moveToPoint(0, 6, 500, {.minSpeed = 33});
+   pros::delay(500);
+   chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
+   pros::delay(500);
    //chassis.moveToPoint(0, 3, 500, {.minSpeed = 33});
    //chassis.moveToPoint(0, 0, 500, {.forwards = false, .minSpeed = 33});
    //pros::delay(500);
 
-
+   
 
 
    // score preload
    setLiftTarget(100);
-   chassis.moveToPose(-24, 14, -90, 3000,
-                      {.lead = 0.8, .maxSpeed = 80, .minSpeed = 20});
+   chassis.moveToPose(-24, 14, -90, 6000,
+                      {.lead = 0.6, .maxSpeed = 40, .minSpeed = 20});
     
    moveArmAuton(90);
    chassis.waitUntilDone();
@@ -847,18 +903,21 @@ void autonomous() {
    setLiftTarget(0);
    moveArmAuton(-90);
    claw.move_voltage(12000);
-   chassis.moveToPoint(-3, 17, 3000, {.forwards=false, .minSpeed=20, .earlyExitRange=5});
-   chassis.turnToPoint(20, 34.95, 2000, {.forwards=false});
-   chassis.moveToPoint(20, 34.95, 5000, {.forwards=false, .maxSpeed=20});
+   chassis.moveToPoint(-3, 17, 3000, {.forwards=false, .minSpeed=20});
+   chassis.turnToPoint(22, 36.95, 6000, {.forwards=false, .minSpeed=60, .earlyExitRange=6});
+   chassis.moveToPoint(22, 36.95, 6000, {.forwards=false, .maxSpeed=20});
    pros::delay(1000);
    chassis.turnToHeading(90, 500, {.maxSpeed=80});
    moveArmAuton(90);
+   pros::delay(500);
    setLiftTarget(60);
-   chassis.moveToPose(36, 37, 90, 5000);
+   chassis.moveToPose(38, 39, 90, 2500);
    chassis.waitUntilDone();
    setLiftTarget(0);
-   pros::delay(500);
+   waitUntilLiftAt(0, 1500);
+    pros::delay(500);
    claw.move_voltage(-12000);
+   pros::delay(500);
 
 
 
@@ -866,7 +925,7 @@ void autonomous() {
 
    // second toggle
    chassis.moveToPose(24, 64, 180, 2000, {.forwards=false, .lead=0.6, .minSpeed=40, .earlyExitRange=4});
-   chassis.moveToPose(70, 59, -90, 5000, {.forwards=false, .lead=0.6, .minSpeed=35});
+   chassis.moveToPose(70, 68, -90, 5000, {.forwards=false, .lead=0.6, .minSpeed=35});
    chassis.waitUntilDone();
    //chassis.moveToPose(55.7, 59.5, -90, 5000, {.lead=0.8, .minSpeed=35});
    //chassis.moveToPose(66.7, 59.5, -90, 5000, {.forwards=false, .minSpeed=35});
@@ -876,13 +935,16 @@ void autonomous() {
 
    // second pin
    claw.move_voltage(12000);
-   chassis.moveToPose(60, 64, 0, 5000, {.minSpeed=0.4});
+   chassis.moveToPose(64, 64, 0, 5000, {.minSpeed=0.4});
    moveArmAuton(-90);
-   chassis.moveToPose(60, 36.5, 0, 15000, {.forwards=false, .lead=0.2, .maxSpeed=80});
-   chassis.moveToPose(40, 5, 45, 15000, {.forwards=false, .lead=0.4, .maxSpeed=40});
-   setLiftTarget(60);
+   chassis.moveToPose(64, 35.5, 0, 5000, {.forwards=false, .lead=0.2, .maxSpeed=80});
+   chassis.moveToPose(39, 5, 45, 5000, {.forwards=false, .lead=0.4, .maxSpeed=40});
+   chassis.waitUntilDone();
+   pros::delay(500);
    moveArmAuton(90);
-   chassis.moveToPose(48, 33, 0, 15000, {.maxSpeed=80});
+   pros::delay(500);
+   setLiftTarget(120);
+   chassis.moveToPose(48, 33, 0, 5000, {.maxSpeed=80});
    chassis.waitUntilDone();
    setLiftTarget(0);
    waitUntilLiftAt(3.0, 1500);
@@ -890,26 +952,30 @@ void autonomous() {
    pros::delay(300);
 
 
-/*
+
 
 
    // loader pin #3
-   claw.move_voltage(12000);
+   chassis.setPose(0,0,0);
+   resetAtGoal1(rightDistance, RIGHT_DISTANCE_MOUNT);
    moveArmAuton(-90);
-   chassis.moveToPose(58.5, -2.65, 0, 15000, {.forwards=false, .maxSpeed=80});
+   chassis.moveToPose(12.5, -32, 0, 5000, {.forwards=false,.lead=0.8, .maxSpeed=80});
+   claw.move_voltage(12000);
    chassis.waitUntilDone();
-   resetAtLoader();
+   chassis.moveToPose(0, 0, 0, 15000, {.lead=0.8, .maxSpeed=80, .minSpeed=40});
+   chassis.waitUntil(6);
    setLiftTarget(60);
    moveArmAuton(90);
-   chassis.moveToPose(47.5, 22.8, 0, 15000, {.maxSpeed=80});
-   chassis.waitUntilDone();
+   chassis.moveToPose(0, 0, 0, 15000, {.lead=0.8, .maxSpeed=80, .minSpeed=40});
+    chassis.waitUntilDone();
    setLiftTarget(0);
    waitUntilLiftAt(3.0, 1500);
    claw.move_voltage(-12000);
-   pros::delay(300);
+   pros::delay(1000);
 
 
 
+/*
 
    // loader pin #4
    chassis.moveToPose(58.5, -2.65, 0, 15000, {.forwards=false, .maxSpeed=80});
@@ -949,8 +1015,9 @@ void autonomous() {
    // loader pin #9
    chassis.moveToPose(50.5, -2.65, 0, 15000, {.forwards=false, .maxSpeed=80});
    */
+  
+  
 }
-
 
 
 
@@ -1219,9 +1286,11 @@ void opcontrol() {
 
 
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) {
+            claw.set_current_limit(2500);
            claw.move_voltage(12000);
        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
-           claw.move_voltage(-12000);
+            claw.set_current_limit(1000);
+           claw.move_voltage(-6000);
        } else {
            claw.brake();
        }
