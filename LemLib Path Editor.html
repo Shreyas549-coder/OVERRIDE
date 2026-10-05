@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LemLib Path Editor</title>
+<style>
+:root{--bg:#eef0ec;--pn:#fbfbf8;--ink:#1d2a26;--mut:#68756f;--ln:#d3d8d2;--ac:#0b6e5e;--fld:#dfe5de;--grid:#c3ccc4;--sel:#d6402b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121816;--pn:#1a2220;--ink:#e3ebe7;--mut:#8d9b95;--ln:#2d3935;--ac:#3fc4a8;--fld:#1f2926;--grid:#33423d;--sel:#ff7a63}}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.4 ui-sans-serif,system-ui,"Segoe UI",sans-serif;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--ln);background:var(--pn);flex-wrap:wrap}
+h1{font-size:15px;margin:0 8px 0 0;font-weight:700;letter-spacing:.2px}
+main{flex:1;display:grid;grid-template-columns:210px 1fr 290px;min-height:0}
+aside{background:var(--pn);overflow:auto;padding:10px;min-height:0}
+#L{border-right:1px solid var(--ln)}#Rt{border-left:1px solid var(--ln)}
+#cv{position:relative;min-width:0;min-height:0}canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair}
+#st{position:absolute;left:8px;bottom:6px;font:12px ui-monospace,monospace;color:var(--mut);background:var(--pn);padding:2px 6px;border-radius:4px}
+button,.btn{font:inherit;border:1px solid var(--ln);background:var(--pn);color:var(--ink);padding:5px 10px;border-radius:6px;cursor:pointer}
+button:hover{border-color:var(--ac)}button.p{background:var(--ac);color:var(--pn);border-color:var(--ac);font-weight:600}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+.it{display:block;width:100%;text-align:left;margin-bottom:4px;border-radius:6px}.it.on{border-color:var(--ac);background:color-mix(in srgb,var(--ac) 14%,var(--pn));font-weight:600}
+h2{font-size:12px;margin:14px 0 6px;color:var(--mut);font-weight:600}h2:first-child{margin-top:0}
+label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;color:var(--mut)}
+input[type=text],input[type=number]{width:120px;font:inherit;padding:4px 6px;border:1px solid var(--ln);border-radius:5px;background:var(--bg);color:var(--ink)}
+textarea{width:100%;height:190px;font:11px/1.3 ui-monospace,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--ln);border-radius:6px;padding:6px;resize:vertical}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}.hint{color:var(--mut);font-size:12px}
+@media (max-width:900px){main{grid-template-columns:1fr;grid-template-rows:auto 62vh auto;overflow:auto}#L,#Rt{border:0}body{height:auto;min-height:100%}}
+</style></head><body>
+<header><h1>LemLib Path Editor</h1>
+<button class="p" id="open">Open files</button><button id="new">New path</button>
+<button id="exp">Download .txt</button><button id="expAll">Download all</button><button id="cp">Copy output</button>
+<span class="hint" id="msg"></span><input type="file" id="fi" accept=".txt,.json" multiple hidden></header>
+<main>
+<aside id="L"><h2>Paths</h2><div id="list"></div><button id="del" style="margin-top:6px">Delete path</button>
+<p class="hint">Drop .txt files anywhere to load them. Drag points to edit. Wheel zooms, drag empty space pans.</p></aside>
+<div id="cv"><canvas id="c"></canvas><div id="st"></div></div>
+<aside id="Rt">
+<h2>Path</h2>
+<label>Name<input type="text" id="nm"></label>
+<label>Min speed<input type="number" id="vf"></label>
+<label>Max speed<input type="number" id="vt"></label>
+<label>Max decel rate<input type="number" id="dc"></label>
+<label>Point spacing<input type="number" id="dn" step="0.5"></label>
+<label>Robot W / H<span><input type="number" id="rw" style="width:56px"> <input type="number" id="rh" style="width:56px"></span></label>
+<label><span>Snap to 1&Prime; grid</span><input type="checkbox" id="sn"></label>
+<h2>Selected point</h2>
+<div id="sp"><span class="hint">Click a point on the canvas.</span></div>
+<div class="row"><button id="addC">+ Curve</button><button id="addL">+ Line</button><button id="delP">Delete point</button></div>
+<h2>Output (.txt preview)</h2><textarea id="out" readonly spellcheck="false"></textarea>
+</aside></main>
+<script>
+const $=id=>document.getElementById(id),R=n=>Math.round(n*1000)/1000,uid=()=>Math.random().toString(36).slice(2,12);
+const cl=(v,a,b)=>Math.max(a,Math.min(b,v));
+let paths=[],cur=0,sel=null,view={x:0,y:0,s:4},drag=null,snap=false;
+function mk(name,from,to,eps,segs,rw=18,rh=rw){return{name,from,to,dec:127,rw,rh,dens:2,
+ eps:eps.map(e=>({x:e[0],y:e[1],h:e[2],u:uid()})),segs:segs.map(s=>s&&{a:{x:s[0],y:s[1],u:uid()},b:{x:s[2],y:s[3],u:uid()}})}}
+const K=-4.393939393939394,W=11.811023622047244;
+paths=[mk('Path',23,64,[[0,0,0],[8.994,-29.664,0]],[[0,-8,8.994,-14.664]]),
+mk('Goal',23,64,[[8.994,-29.664,0],[0,-3,0]],[[8.994,-14.664,0,-11]]),
+mk('Loader 2',18,52,[[0,0,0],[-14.5,-37,90]],[[0,-12,K,-37]],W),
+mk('Goal 2',18,52,[[-14.5,-37,90],[0,0,0]],[[K,-37,0,-12]],W),
+mk('U Turn',48,127,[[38,41,90],[63,61,-90]],[[28,41,35,61]]),
+mk('Yellow',35,55,[[63,61,90],[79,57,90]],[[67,61,71,57]]),
+mk('Green',30,65,[[79,57,90],[67,59,90],[28,59,90],[13,35,0]],[[75,57,71,59],null,[19,59,13,45]])];
+// ---------- parse / export ----------
+function parse(t){const i=t.indexOf('#PATH.JERRYIO-DATA');if(i<0)throw Error('No #PATH.JERRYIO-DATA line found');
+ const j=JSON.parse(t.slice(i+18).trim());
+ return j.paths.map(P=>{const eps=[],segs=[];
+  P.segments.forEach((sg,k)=>{const c=sg.controls;if(!k)eps.push(c[0]);segs.push(c.length>=4?[c[1].x,c[1].y,c[2].x,c[2].y]:null);eps.push(c[c.length-1])});
+  const p=mk(P.name,P.pc.speedLimit.from,P.pc.speedLimit.to,eps.map(e=>[e.x,e.y,e.heading||0]),segs,j.gc.robotWidth,j.gc.robotHeight);
+  p.dens=j.gc.pointDensity||2;p.dec=P.pc.maxDecelerationRate??127;return p})}
+function bez(a,s,b,t){const m=1-t,w=[m*m*m,3*m*m*t,3*m*t*t,t*t*t];return{x:w[0]*a.x+w[1]*s.a.x+w[2]*s.b.x+w[3]*b.x,y:w[0]*a.y+w[1]*s.a.y+w[2]*s.b.y+w[3]*b.y}}
+function sample(p){const f=[];
+ p.segs.forEach((s,i)=>{const a=p.eps[i],b=p.eps[i+1],n=s?150:1;for(let k=i?1:0;k<=n;k++){const t=k/n;f.push(s?bez(a,s,b,t):{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t})}});
+ const cum=[0];for(let i=1;i<f.length;i++)cum.push(cum[i-1]+Math.hypot(f[i].x-f[i-1].x,f[i].y-f[i-1].y));
+ const L=cum[cum.length-1],d=Math.max(.25,p.dens),out=[];let j=1;
+ for(let s=0;s<L-d*.25;s+=d){while(j<f.length-1&&cum[j]<s)j++;const u=(s-cum[j-1])/((cum[j]-cum[j-1])||1);out.push({x:f[j-1].x+(f[j].x-f[j-1].x)*u,y:f[j-1].y+(f[j].y-f[j-1].y)*u})}
+ const e=f[f.length-1];out.push({x:e.x,y:e.y});
+ // approximate speed profile: slow down on tight curves, limit accel, stop at end
+ const n=out.length,v=out.map((q,i)=>{if(i==0||i==n-1)return p.to;const a=out[i-1],c=out[i+1],A=Math.hypot(q.x-a.x,q.y-a.y),B=Math.hypot(c.x-q.x,c.y-q.y),C=Math.hypot(c.x-a.x,c.y-a.y);
+  const ar=Math.abs((q.x-a.x)*(c.y-a.y)-(q.y-a.y)*(c.x-a.x));const k=2*ar/((A*B*C)||1);return p.to-cl(k/.12,0,1)*(p.to-p.from)});
+ const step=Math.max(5,p.dec/6);for(let i=1;i<n;i++)v[i]=Math.min(v[i],v[i-1]+step);for(let i=n-2;i>=0;i--)v[i]=Math.min(v[i],v[i+1]+step);
+ out.forEach((q,i)=>q.v=i==n-1?0:v[i]);return out}
+function ctrlList(p){const r=[];p.segs.forEach((s,i)=>{r.push(p.eps[i]);if(s)r.push(s.a,s.b);r.push(p.eps[i+1])});return r}
+function toText(p){const pts=sample(p),L=pts[pts.length-1],cs=ctrlList(p),n=cs.length;
+ let tx=0,ty=1;const q=cs[n-2];const dx=L.x-q.x,dy=L.y-q.y,m=Math.hypot(dx,dy);if(m>1e-6){tx=dx/m;ty=dy/m}
+ const ln=pts.map(q=>`${R(q.x)}, ${R(q.y)}, ${R(q.v)}`);ln.push(`${R(L.x)}, ${R(L.y)}, 0`,`${R(L.x+tx*20)}, ${R(L.y+ty*20)}, 0`,'endData','127',String(p.to),'200',cs.map(c=>R(c.x)+', '+R(c.y)).join(', '));
+ const ct=(o,t,h)=>{const r={uid:o.u,x:R(o.x),y:R(o.y),lock:false,visible:true};if(t=='end-point')r.heading=h;r.__type=t;return r};
+ const segments=p.segs.map((s,i)=>({controls:[ct(p.eps[i],'end-point',p.eps[i].h),...(s?[ct(s.a,'control'),ct(s.b,'control')]:[]),ct(p.eps[i+1],'end-point',p.eps[i+1].h)],speedProfiles:[],lookaheadKeyframes:[],uid:uid()}));
+ const lim=(v)=>({value:v,label:String(v)});
+ const J={appVersion:'0.11.0',format:'LemLib v0.5',gc:{robotWidth:p.rw,robotHeight:p.rh,robotIsHolonomic:false,showRobot:false,uol:2.54,pointDensity:p.dens,controlMagnetDistance:1.968503937007874,
+  fieldImage:{displayName:'V5RC 2027 - Override (Skills)',signature:'V5RC-Override-Skills-TopDownHighlighted-TileColor66_71',origin:{__type:'built-in'}},coordinateSystem:'Path-Based Strict Coordinates'},
+  paths:[{segments,pc:{speedLimit:{minLimit:lim(0),maxLimit:lim(127),step:1,from:p.from,to:p.to},bentRateApplicableRange:{minLimit:lim(0),maxLimit:lim(1),step:.001,from:0,to:.1},maxDecelerationRate:p.dec},name:p.name,uid:uid(),lock:false,visible:true}]};
+ return ln.join('\n')+'\n#PATH.JERRYIO-DATA '+JSON.stringify(J)}
+// ---------- UI ----------
+const cv=$('c'),g=cv.getContext('2d');let W2=0,H2=0,dpr=1;
+const P=()=>paths[cur];
+function fit(){const r=cv.getBoundingClientRect();dpr=devicePixelRatio||1;W2=r.width;H2=r.height;cv.width=W2*dpr;cv.height=H2*dpr;view.s=Math.min(W2,H2)/156;view.x=0;view.y=0;draw()}
+const sx=x=>W2/2+(x-view.x)*view.s,sy=y=>H2/2-(y-view.y)*view.s,wx=x=>(x-W2/2)/view.s+view.x,wy=y=>-(y-H2/2)/view.s+view.y;
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function handles(p){const h=[];p.segs.forEach((s,i)=>{if(s){h.push({o:s.a,k:'c',i,n:'a',anc:p.eps[i]},{o:s.b,k:'c',i,n:'b',anc:p.eps[i+1]})}});p.eps.forEach((e,i)=>h.push({o:e,k:'e',i}));return h}
+function draw(){g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W2,H2);
+ const X0=sx(-72),Y0=sy(72),S=144*view.s;g.fillStyle=css('--fld');g.fillRect(X0,Y0,S,S);g.strokeStyle=css('--grid');g.lineWidth=1;g.beginPath();
+ for(let i=0;i<=6;i++){const o=i*24*view.s;g.moveTo(X0+o,Y0);g.lineTo(X0+o,Y0+S);g.moveTo(X0,Y0+o);g.lineTo(X0+S,Y0+o)}g.stroke();
+ g.strokeStyle=css('--mut');g.globalAlpha=.5;g.strokeRect(X0,Y0,S,S);g.beginPath();g.moveTo(sx(0),Y0);g.lineTo(sx(0),Y0+S);g.moveTo(X0,sy(0));g.lineTo(X0+S,sy(0));g.setLineDash([4,4]);g.stroke();g.setLineDash([]);g.globalAlpha=1;
+ paths.forEach((p,pi)=>{if(pi==cur)return;g.globalAlpha=.4;g.strokeStyle=css('--mut');g.lineWidth=2;g.beginPath();sample(p).forEach((q,i)=>i?g.lineTo(sx(q.x),sy(q.y)):g.moveTo(sx(q.x),sy(q.y)));g.stroke();g.globalAlpha=1});
+ const p=P();if(!p)return;const pts=sample(p);g.lineWidth=4;g.lineCap='round';
+ for(let i=1;i<pts.length;i++){const t=cl((pts[i].v-p.from)/((p.to-p.from)||1),0,1);g.strokeStyle=`hsl(${20+t*160},75%,45%)`;g.beginPath();g.moveTo(sx(pts[i-1].x),sy(pts[i-1].y));g.lineTo(sx(pts[i].x),sy(pts[i].y));g.stroke()}
+ g.fillStyle=css('--ink');pts.forEach(q=>{g.fillRect(sx(q.x)-1,sy(q.y)-1,2,2)});
+ const hs=handles(p);g.lineWidth=1.5;g.strokeStyle=css('--mut');hs.filter(h=>h.k=='c').forEach(h=>{g.beginPath();g.moveTo(sx(h.anc.x),sy(h.anc.y));g.lineTo(sx(h.o.x),sy(h.o.y));g.stroke()});
+ hs.forEach(h=>{const on=sel&&sel.o===h.o;g.beginPath();if(h.k=='e'){g.arc(sx(h.o.x),sy(h.o.y),8,0,7);g.fillStyle=on?css('--sel'):css('--ac')}else{g.rect(sx(h.o.x)-5,sy(h.o.y)-5,10,10);g.fillStyle=on?css('--sel'):css('--pn')}g.fill();g.strokeStyle=on?css('--sel'):css('--ac');g.lineWidth=2;g.stroke();
+  if(h.k=='e'){g.fillStyle=css('--pn');g.font='bold 10px sans-serif';g.textAlign='center';g.fillText(h.i+1,sx(h.o.x),sy(h.o.y)+3.5)}
+  if(h.k=='e'&&h.o.h!=null){const a=h.o.h*Math.PI/180;g.strokeStyle=css('--ac');g.lineWidth=1.5;g.beginPath();g.moveTo(sx(h.o.x),sy(h.o.y));g.lineTo(sx(h.o.x)+Math.sin(a)*18,sy(h.o.y)-Math.cos(a)*18);g.stroke()}});
+ $('out').value=toText(p)}
+function ui(){$('list').innerHTML='';paths.forEach((p,i)=>{const b=document.createElement('button');b.className='it'+(i==cur?' on':'');b.textContent=p.name;b.onclick=()=>{cur=i;sel=null;ui()};$('list').append(b)});
+ const p=P();if(!p)return draw();$('nm').value=p.name;$('vf').value=p.from;$('vt').value=p.to;$('dc').value=p.dec;$('dn').value=p.dens;$('rw').value=p.rw;$('rh').value=p.rh;selUI();draw()}
+function selUI(){const d=$('sp');if(!sel){d.innerHTML='<span class="hint">Click a point on the canvas.</span>';return}
+ const e=sel.k=='e';d.innerHTML=`<label>${e?'Endpoint '+(sel.i+1):'Control point'} X<input type="number" id="px" step="0.1" value="${R(sel.o.x)}"></label><label>Y<input type="number" id="py" step="0.1" value="${R(sel.o.y)}"></label>`+(e?`<label>Heading (&deg;)<input type="number" id="ph" value="${sel.o.h}"></label>`:'');
+ $('px').oninput=ev=>{sel.o.x=+ev.target.value||0;draw()};$('py').oninput=ev=>{sel.o.y=+ev.target.value||0;draw()};if(e)$('ph').oninput=ev=>{sel.o.h=+ev.target.value||0;draw()}}
+[['nm','name',0],['vf','from'],['vt','to'],['dc','dec'],['dn','dens'],['rw','rw'],['rh','rh']].forEach(([id,k,s])=>$(id).oninput=e=>{P()[k]=s===0?e.target.value:+e.target.value;if(id=='nm')[...$('list').children][cur].textContent=e.target.value;draw()});
+$('sn').onchange=e=>snap=e.target.checked;
+function pos(e){const r=cv.getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top]}
+cv.onpointerdown=e=>{const[x,y]=pos(e),p=P();cv.setPointerCapture(e.pointerId);
+ const h=p&&handles(p).reverse().find(h=>Math.hypot(sx(h.o.x)-x,sy(h.o.y)-y)<(h.k=='e'?11:9));
+ if(h){sel=h;drag={t:'pt'};selUI()}else{drag={t:'pan',x,y,vx:view.x,vy:view.y}}draw()};
+cv.onpointermove=e=>{const[x,y]=pos(e);$('st').textContent=`x ${R(wx(x))}  y ${R(wy(y))}`;if(!drag)return;
+ if(drag.t=='pan'){view.x=drag.vx-(x-drag.x)/view.s;view.y=drag.vy+(y-drag.y)/view.s}
+ else{let a=wx(x),b=wy(y);if(snap){a=Math.round(a);b=Math.round(b)}sel.o.x=R(a);sel.o.y=R(b);if($('px')){$('px').value=sel.o.x;$('py').value=sel.o.y}}draw()};
+cv.onpointerup=()=>drag=null;
+cv.onwheel=e=>{e.preventDefault();const[x,y]=pos(e),a=wx(x),b=wy(y);view.s=cl(view.s*(e.deltaY<0?1.15:1/1.15),1.5,30);view.x=a-(x-W2/2)/view.s;view.y=b+(y-H2/2)/view.s;draw()};
+function tail(p){const L=p.eps[p.eps.length-1],s=p.segs[p.segs.length-1],q=s?s.b:p.eps[p.eps.length-2];let dx=L.x-q.x,dy=L.y-q.y;const m=Math.hypot(dx,dy)||1;return[L,dx/m||0,m>1e-6?dy/m:1]}
+function add(curve){const p=P();if(!p)return;const[L,dx,dy]=tail(p),D=curve?24:20,n={x:R(L.x+dx*D),y:R(L.y+dy*D),h:L.h,u:uid()};
+ p.segs.push(curve?{a:{x:R(L.x+dx*8),y:R(L.y+dy*8),u:uid()},b:{x:R(n.x-dx*8),y:R(n.y-dy*8),u:uid()}}:null);p.eps.push(n);sel={o:n,k:'e',i:p.eps.length-1};ui()}
+$('addC').onclick=()=>add(1);$('addL').onclick=()=>add(0);
+function delPt(){const p=P();if(!sel||sel.k!='e'||p.eps.length<3)return;p.eps.splice(sel.i,1);p.segs.splice(Math.min(sel.i,p.segs.length-1),1);sel=null;ui()}
+$('delP').onclick=delPt;addEventListener('keydown',e=>{if(e.key=='Delete'&&e.target==document.body)delPt()});
+$('new').onclick=()=>{paths.push(mk('New path',20,64,[[-20,-20,0],[20,20,0]],[[-20,0,0,20]]));cur=paths.length-1;sel=null;ui()};
+$('del').onclick=()=>{if(paths.length&&confirm('Delete "'+P().name+'"?')){paths.splice(cur,1);cur=Math.max(0,cur-1);sel=null;ui()}};
+function load(files){[...files].forEach(f=>f.text().then(t=>{try{const n=parse(t);paths.push(...n);cur=paths.length-1;sel=null;ui();msg('Loaded '+f.name)}catch(er){msg('Could not read '+f.name+': '+er.message)}}))}
+$('open').onclick=()=>$('fi').click();$('fi').onchange=e=>{load(e.target.files);e.target.value=''};
+addEventListener('dragover',e=>e.preventDefault());addEventListener('drop',e=>{e.preventDefault();load(e.dataTransfer.files)});
+function dl(p){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([toText(p)],{type:'text/plain'}));a.download=(p.name.replace(/[^\w-]+/g,'_')||'path')+'.txt';a.click()}
+$('exp').onclick=()=>P()&&dl(P());$('expAll').onclick=()=>paths.forEach((p,i)=>setTimeout(()=>dl(p),i*250));
+$('cp').onclick=()=>{$('out').select();try{navigator.clipboard.writeText($('out').value);msg('Copied')}catch(e){document.execCommand('copy');msg('Copied')}};
+let mt;function msg(t){$('msg').textContent=t;clearTimeout(mt);mt=setTimeout(()=>$('msg').textContent='',3500)}
+new ResizeObserver(fit).observe($('cv'));matchMedia('(prefers-color-scheme:dark)').onchange=draw;ui();
+</script></body></html>
