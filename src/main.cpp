@@ -986,21 +986,16 @@ void autonomous() {
 
    // Score the preload, then lower the lift before releasing it.
    setLiftTarget(100);
-   chassis.moveToPose(-24, 16, -90, 6000, {.lead = 0.4, .maxSpeed = 70, .minSpeed = 30});
+   chassis.moveToPose(-24, 16, -90, 1500, {.lead = 0.4, .maxSpeed = 70, .minSpeed = 30});
    moveArmAuton(90);
    chassis.waitUntilDone();
-
    setLiftTarget(0);
    claw.move_voltage(-12000);
    pros::delay(300);
    claw.brake();
 
-   // Collect the first pin, then score it.
-   
-//    chassis.moveToPoint(-3, 17, 3000, {.forwards=false, .minSpeed=20});
-//    chassis.turnToPoint(22, 36.95, 6000, {.forwards=false, .minSpeed=60, .earlyExitRange=6});
-//    chassis.moveToPoint(22, 36.95, 6000, {.forwards=false, .minSpeed=60});
-      chassis.moveToPose(25, 38.95, -135, 6000, {.forwards=false, .lead=0});
+
+      chassis.moveToPose(25, 41, -120, 6000, {.forwards=false, .lead=0});
       moveArmAuton(-90);
     claw.move_voltage(12000);
     chassis.waitUntilDone();
