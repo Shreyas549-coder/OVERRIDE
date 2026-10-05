@@ -1,0 +1,50 @@
+79, 57, 40
+77.008, 57.147, 46.085
+75.04, 57.51, 52.168
+73.096, 57.976, 58.249
+71.152, 58.447, 64.412
+69.19, 58.824, 64.995
+67.198, 58.998, 65
+65.186, 59, 65
+63.197, 59, 65
+61.189, 59, 65
+59.2, 59, 65
+57.191, 59, 65
+55.203, 59, 65
+53.194, 59, 65
+51.205, 59, 65
+49.197, 59, 65
+47.207, 59, 65
+45.199, 59, 65
+43.21, 59, 65
+41.201, 59, 65
+39.212, 59, 65
+37.204, 59, 64.879
+35.215, 59, 60.989
+33.206, 59, 57.094
+31.218, 59, 53.201
+29.209, 59, 49.255
+27.225, 58.965, 45.362
+25.268, 58.558, 44.084
+23.449, 57.744, 43.078
+21.801, 56.609, 42.073
+20.339, 55.246, 41.063
+19.048, 53.72, 40.06
+17.912, 52.081, 39.055
+16.907, 50.348, 38.045
+16.03, 48.556, 37.041
+15.264, 46.705, 36.034
+14.61, 44.82, 35.031
+14.061, 42.903, 34.024
+13.618, 40.955, 33.017
+13.286, 38.977, 32.016
+13.075, 36.996, 31.007
+13, 35, 0
+13, 35, 0
+13, 15, 0
+endData
+127
+65
+200
+79, 57, 75, 57, 71, 59, 67, 59, 67, 59, 28, 59, 28, 59, 19, 59, 13, 45, 13, 35
+#PATH.JERRYIO-DATA {"appVersion":"0.11.0","format":"LemLib v0.5","gc":{"robotWidth":18.0,"robotHeight":18.0,"robotIsHolonomic":false,"showRobot":false,"uol":2.54,"pointDensity":2,"controlMagnetDistance":1.968503937007874,"fieldImage":{"displayName":"V5RC 2027 - Override (Skills)","signature":"V5RC-Override-Skills-TopDownHighlighted-TileColor66_71","origin":{"__type":"built-in"}},"coordinateSystem":"Path-Based Strict Coordinates"},"paths":[{"segments":[{"controls":[{"uid":"greenStart","x":79.0,"y":57.0,"lock":false,"visible":true,"heading":90,"__type":"end-point"},{"uid":"greenBlend1","x":75.0,"y":57.0,"lock":false,"visible":true,"__type":"control"},{"uid":"greenBlend2","x":71.0,"y":59.0,"lock":false,"visible":true,"__type":"control"},{"uid":"greenLaneStart","x":67.0,"y":59.0,"lock":false,"visible":true,"heading":90,"__type":"end-point"}],"speedProfiles":[],"lookaheadKeyframes":[],"uid":"greenSegment0"},{"controls":[{"uid":"greenLaneStart","x":67.0,"y":59.0,"lock":false,"visible":true,"heading":90,"__type":"end-point"},{"uid":"greenJoin","x":28.0,"y":59.0,"lock":false,"visible":true,"heading":90,"__type":"end-point"}],"speedProfiles":[],"lookaheadKeyframes":[],"uid":"greenSegment1"},{"controls":[{"uid":"greenJoin","x":28.0,"y":59.0,"lock":false,"visible":true,"heading":90,"__type":"end-point"},{"uid":"greenControl1","x":19.0,"y":59.0,"lock":false,"visible":true,"__type":"control"},{"uid":"greenControl2","x":13.0,"y":45.0,"lock":false,"visible":true,"__type":"control"},{"uid":"greenEnd","x":13.0,"y":35.0,"lock":false,"visible":true,"heading":0,"__type":"end-point"}],"speedProfiles":[],"lookaheadKeyframes":[],"uid":"greenSegment2"}],"pc":{"speedLimit":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":127,"label":"127"},"step":1,"from":30,"to":65},"bentRateApplicableRange":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":1,"label":"1"},"step":0.001,"from":0,"to":0.1},"maxDecelerationRate":127},"name":"Green","uid":"greenPath0","lock":false,"visible":true}]}

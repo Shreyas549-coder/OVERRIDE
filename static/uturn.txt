@@ -1,0 +1,31 @@
+38, 41, 48
+36.088, 41.303, 48
+34.503, 42.395, 48
+33.744, 44.161, 48
+33.798, 46.097, 48
+34.376, 47.948, 48
+35.289, 49.66, 67.856
+36.441, 51.234, 88.979
+37.761, 52.661, 110.102
+39.21, 53.948, 123.586
+40.77, 55.112, 114.341
+42.413, 56.151, 105.107
+44.124, 57.072, 95.877
+45.896, 57.884, 86.619
+47.709, 58.587, 77.382
+49.554, 59.189, 69.172
+51.44, 59.698, 64.986
+53.34, 60.114, 60.818
+55.255, 60.444, 56.654
+57.187, 60.694, 52.479
+59.128, 60.867, 48.303
+61.069, 60.968, 44.138
+63, 61, 40
+63, 61, 0
+83, 61, 0
+endData
+127
+127
+200
+38, 41, 28, 41, 35, 61, 63, 61
+#PATH.JERRYIO-DATA {"appVersion":"0.11.0","format":"LemLib v0.5","gc":{"robotWidth":18.0,"robotHeight":18.0,"robotIsHolonomic":false,"showRobot":false,"uol":2.54,"pointDensity":2,"controlMagnetDistance":1.968503937007874,"fieldImage":{"displayName":"V5RC 2027 - Override (Skills)","signature":"V5RC-Override-Skills-TopDownHighlighted-TileColor66_71","origin":{"__type":"built-in"}},"coordinateSystem":"Path-Based Strict Coordinates"},"paths":[{"segments":[{"controls":[{"uid":"uturnControl0","x":38.0,"y":41.0,"lock":false,"visible":true,"heading":90,"__type":"end-point"},{"uid":"uturnControl1","x":28.0,"y":41.0,"lock":false,"visible":true,"__type":"control"},{"uid":"uturnControl2","x":35.0,"y":61.0,"lock":false,"visible":true,"__type":"control"},{"uid":"uturnControl3","x":63.0,"y":61.0,"lock":false,"visible":true,"heading":-90,"__type":"end-point"}],"speedProfiles":[],"lookaheadKeyframes":[],"uid":"uturnSegment0"}],"pc":{"speedLimit":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":127,"label":"127"},"step":1,"from":48,"to":127},"bentRateApplicableRange":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":1,"label":"1"},"step":0.001,"from":0,"to":0.1},"maxDecelerationRate":127},"name":"U Turn","uid":"uturnPath0","lock":false,"visible":true}]}

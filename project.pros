@@ -635,7 +635,8 @@
       }
     },
     "upload_options": {
-      "slot": 1
+      "slot": 1,
+      "icon": "clawbot"
     },
     "use_early_access": false
   }

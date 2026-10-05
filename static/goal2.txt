@@ -1,0 +1,31 @@
+-14.5, -37, 41.85
+-12.762, -36.744, 43.938
+-11.134, -36.003, 45.995
+-9.683, -34.88, 48.012
+-8.417, -33.495, 49.991
+-7.315, -31.938, 51.15
+-6.35, -30.267, 51.15
+-5.499, -28.518, 51.15
+-4.741, -26.713, 51.15
+-4.064, -24.868, 51.15
+-3.457, -22.991, 51.15
+-2.911, -21.09, 51.15
+-2.419, -19.17, 51.15
+-1.977, -17.234, 51.15
+-1.582, -15.286, 51.15
+-1.229, -13.327, 51.023
+-0.918, -11.358, 47.877
+-0.649, -9.382, 42.315
+-0.422, -7.399, 36.757
+-0.238, -5.41, 31.201
+-0.101, -3.416, 25.648
+-0.007, -0.875, 18.6
+0, 0, 0
+0, 0, 0
+0, 20, 0
+endData
+127
+52
+200
+-14.5, -37, -4.394, -37, 0, -12, 0, 0
+#PATH.JERRYIO-DATA {"appVersion":"0.11.0","format":"LemLib v0.5","gc":{"robotWidth":11.811023622047244,"robotHeight":11.811023622047244,"robotIsHolonomic":false,"showRobot":false,"uol":2.54,"pointDensity":2,"controlMagnetDistance":1.968503937007874,"fieldImage":{"displayName":"V5RC 2027 - Override (Skills)","signature":"V5RC-Override-Skills-TopDownHighlighted-TileColor66_71","origin":{"__type":"built-in"}},"coordinateSystem":"Path-Based Strict Coordinates"},"paths":[{"segments":[{"controls":[{"uid":"goal2Control0","x":-14.5,"y":-37.0,"lock":false,"visible":true,"heading":90,"__type":"end-point"},{"uid":"goal2Control1","x":-4.393939393939394,"y":-37.0,"lock":false,"visible":true,"__type":"control"},{"uid":"goal2Control2","x":0.0,"y":-12.0,"lock":false,"visible":true,"__type":"control"},{"uid":"goal2Control3","x":0.0,"y":0.0,"lock":false,"visible":true,"heading":0,"__type":"end-point"}],"speedProfiles":[],"lookaheadKeyframes":[],"uid":"goal2Segment0"}],"pc":{"speedLimit":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":127,"label":"127"},"step":1,"from":18,"to":52},"bentRateApplicableRange":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":1,"label":"1"},"step":0.001,"from":0,"to":0.1},"maxDecelerationRate":127},"name":"Goal 2","uid":"goal2Path0","lock":false,"visible":true}]}

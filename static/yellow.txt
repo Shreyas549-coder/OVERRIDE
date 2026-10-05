@@ -1,0 +1,18 @@
+63, 61, 35
+64.826, 60.754, 41.349
+66.582, 60.184, 47.698
+68.294, 59.493, 54.048
+70.007, 58.8, 55
+71.745, 58.176, 55
+73.519, 57.666, 55
+75.328, 57.294, 49.815
+77.162, 57.072, 42.407
+79, 57, 0
+79, 57, 0
+99, 57, 0
+endData
+127
+55
+200
+63, 61, 67, 61, 71, 57, 79, 57
+#PATH.JERRYIO-DATA {"appVersion":"0.11.0","format":"LemLib v0.5","gc":{"robotWidth":18.0,"robotHeight":18.0,"robotIsHolonomic":false,"showRobot":false,"uol":2.54,"pointDensity":2,"controlMagnetDistance":1.968503937007874,"fieldImage":{"displayName":"V5RC 2027 - Override (Skills)","signature":"V5RC-Override-Skills-TopDownHighlighted-TileColor66_71","origin":{"__type":"built-in"}},"coordinateSystem":"Path-Based Strict Coordinates"},"paths":[{"segments":[{"controls":[{"uid":"yellowStart","x":63.0,"y":61.0,"lock":false,"visible":true,"heading":90,"__type":"end-point"},{"uid":"yellowControl1","x":67.0,"y":61.0,"lock":false,"visible":true,"__type":"control"},{"uid":"yellowControl2","x":71.0,"y":57.0,"lock":false,"visible":true,"__type":"control"},{"uid":"yellowEnd","x":79.0,"y":57.0,"lock":false,"visible":true,"heading":90,"__type":"end-point"}],"speedProfiles":[],"lookaheadKeyframes":[],"uid":"yellowSegment0"}],"pc":{"speedLimit":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":127,"label":"127"},"step":1,"from":35,"to":55},"bentRateApplicableRange":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":1,"label":"1"},"step":0.001,"from":0,"to":0.1},"maxDecelerationRate":127},"name":"Yellow","uid":"yellowPath0","lock":false,"visible":true}]}

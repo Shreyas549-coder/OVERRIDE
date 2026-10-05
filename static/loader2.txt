@@ -1,0 +1,31 @@
+0, 0, 41.85
+-0.037, -1.999, 43.701
+-0.136, -3.996, 45.552
+-0.286, -5.989, 47.403
+-0.483, -7.976, 49.255
+-0.723, -9.957, 51.108
+-1.004, -11.932, 51.15
+-1.327, -13.897, 51.15
+-1.693, -15.854, 51.15
+-2.101, -17.799, 51.15
+-2.557, -19.73, 51.15
+-3.064, -21.645, 51.15
+-3.628, -23.54, 51.15
+-4.254, -25.408, 51.15
+-4.953, -27.243, 51.15
+-5.736, -29.033, 51.141
+-6.618, -30.762, 50.53
+-7.62, -32.405, 44.733
+-8.768, -33.919, 38.86
+-10.086, -35.238, 32.889
+-11.591, -36.263, 26.801
+-13.733, -36.951, 18.6
+-14.5, -37, 0
+-14.5, -37, 0
+-34.5, -37, 0
+endData
+127
+52
+200
+0, 0, 0, -12, -4.394, -37, -14.5, -37
+#PATH.JERRYIO-DATA {"appVersion":"0.11.0","format":"LemLib v0.5","gc":{"robotWidth":11.811023622047244,"robotHeight":11.811023622047244,"robotIsHolonomic":false,"showRobot":false,"uol":2.54,"pointDensity":2,"controlMagnetDistance":1.968503937007874,"fieldImage":{"displayName":"V5RC 2027 - Override (Skills)","signature":"V5RC-Override-Skills-TopDownHighlighted-TileColor66_71","origin":{"__type":"built-in"}},"coordinateSystem":"Path-Based Strict Coordinates"},"paths":[{"segments":[{"controls":[{"uid":"loader2Control0","x":0.0,"y":0.0,"lock":false,"visible":true,"heading":0,"__type":"end-point"},{"uid":"loader2Control1","x":0.0,"y":-12.0,"lock":false,"visible":true,"__type":"control"},{"uid":"loader2Control2","x":-4.393939393939394,"y":-37.0,"lock":false,"visible":true,"__type":"control"},{"uid":"loader2Control3","x":-14.5,"y":-37.0,"lock":false,"visible":true,"heading":90,"__type":"end-point"}],"speedProfiles":[],"lookaheadKeyframes":[],"uid":"loader2Segment0"}],"pc":{"speedLimit":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":127,"label":"127"},"step":1,"from":18,"to":52},"bentRateApplicableRange":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":1,"label":"1"},"step":0.001,"from":0,"to":0.1},"maxDecelerationRate":127},"name":"Loader 2","uid":"loader2Path0","lock":false,"visible":true}]}
