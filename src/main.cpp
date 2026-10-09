@@ -967,11 +967,12 @@ ASSET(yellow_txt);
 ASSET(green_txt);
 
 void autonomous() {
-/*
+
    liftAutonomousMode = true;
    enableLiftPID();
-
+/*
    chassis.setPose(0, 0, 180);
+   claw.move_voltage(12000);
 
    // Toggle roller while the claw runs.
    chassis.moveToPoint(0, 8, 500, {.forwards=false, .minSpeed = 33});
@@ -995,7 +996,7 @@ void autonomous() {
    claw.brake();
 
 
-      chassis.moveToPose(25, 45, -150, 6000, {.forwards=false, .lead=0});
+      chassis.moveToPose(25, 45, -150, 3000, {.forwards=false, .lead=0});
       moveArmAuton(-90);
     claw.move_voltage(12000);
     chassis.waitUntilDone();
@@ -1008,17 +1009,37 @@ void autonomous() {
    pros::delay(200);
    claw.move_voltage(-12000);
    // Re-anchor at the first-goal scoring pose used to tune the U-turn.
-   chassis.setPose(38, 41, 90);
+   chassis.setPose(-23.614, -39.576, 180);
    // Sweep around to the second toggle in one backward motion.
-   chassis.follow(uturn_txt, 9, 6000, false);
+   chassis.follow(uturn_txt, 12, 6000, false);
    chassis.waitUntilDone();
    */
+
+   //Dont change above. Everything above works. DONT CHANGE
+   //Dont FUCKING CHANGE IT
+   //Dont FUCKING CHANGE IT
+   //Dont FUCKING CHANGE IT
+   //Dont FUCKING CHANGE IT
+
+   
    // Contact with the bottom wall fixes Y, but does not tell us X. Keep the
    // measured X; at this handoff the robot's front points right.
-   chassis.setPose(63, 61, 90);
-   chassis.follow(yellow_txt, 4.5, 3000, true);
-   chassis.waitUntilDone();
    /*
+   chassis.setPose(0,0,0);
+   chassis.moveToPoint(0, 12, 3000);
+   chassis.turnToHeading(135, 3000);
+   chassis.waitUntilDone();
+   chassis.setPose(0.032, -56.976, 180);
+   chassis.follow(yellow_txt, 10, 4000, false);
+   chassis.waitUntilDone();
+   */
+   
+
+
+   //Part above is waiting for wall rider
+
+
+
    claw.move_voltage(12000);
    // Green heads west. Follow it backwards to keep the front pointing right
    // at the handoff instead of turning beside the bottom wall.
@@ -1113,7 +1134,7 @@ void autonomous() {
    chassis.setPose(-13.5, -37.5, 90);
    pros::delay(1000);
    chassis.moveToPose(48, 24, 45, 6000);
-*/
+
 
 }
 
