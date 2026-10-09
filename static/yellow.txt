@@ -1,19 +1,15 @@
-63, 61, 55
-61.015, 60.755, 48.405
-59.018, 60.668, 45.165
-57.025, 60.816, 39.336
-55.098, 61.333, 35
-53.419, 62.399, 35
-52.286, 64.031, 35
-51.764, 65.955, 37.41
-51.656, 67.95, 45.167
-51.784, 69.945, 49.687
-52, 71.685, 0
-52, 71.685, 0
-54.801, 91.488, 0
+63, 61, 45
+64.959, 60.598, 38.578
+66.827, 59.902, 35
+68.095, 58.406, 35
+68.618, 56.478, 42.481
+69.023, 54.52, 43.861
+69.277, 53.416, 0
+69.277, 53.416, 0
+73.983, 33.978, 0
 endData
 127
-55
+45
 200
-63, 61, 51.1, 59.151, 51.1, 65.321, 52, 71.685
-#PATH.JERRYIO-DATA {"appVersion":"0.11.0","format":"LemLib v0.5","gc":{"robotWidth":18,"robotHeight":18,"robotIsHolonomic":false,"showRobot":false,"uol":2.54,"pointDensity":2,"controlMagnetDistance":1.968503937007874,"fieldImage":{"displayName":"V5RC 2027 - Override (Skills)","signature":"V5RC-Override-Skills-TopDownHighlighted-TileColor66_71","origin":{"__type":"built-in"}},"coordinateSystem":"Path-Based Strict Coordinates"},"paths":[{"segments":[{"controls":[{"uid":"kkonrqqswg","x":63,"y":61,"lock":false,"visible":true,"heading":90,"__type":"end-point"},{"uid":"em7wggofn5","x":51.1,"y":59.151,"lock":false,"visible":true,"__type":"control"},{"uid":"5n7n1f0lml","x":51.1,"y":65.321,"lock":false,"visible":true,"__type":"control"},{"uid":"gm0o5cba6q","x":52,"y":71.685,"lock":false,"visible":true,"heading":90,"__type":"end-point"}],"speedProfiles":[],"lookaheadKeyframes":[],"uid":"qrn7tnwenf"}],"pc":{"speedLimit":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":127,"label":"127"},"step":1,"from":35,"to":55},"bentRateApplicableRange":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":1,"label":"1"},"step":0.001,"from":0,"to":0.1},"maxDecelerationRate":127},"name":"Yellow","uid":"i6lpe5d4eg","lock":false,"visible":true}]}
+63, 61, 68.845, 59.979, 67.898, 59.112, 69.277, 53.416
+#PATH.JERRYIO-DATA {"appVersion":"0.11.0","format":"LemLib v0.5","gc":{"robotWidth":18,"robotHeight":18,"robotIsHolonomic":false,"showRobot":false,"uol":2.54,"pointDensity":2,"controlMagnetDistance":1.968503937007874,"fieldImage":{"displayName":"V5RC 2027 - Override (Skills)","signature":"V5RC-Override-Skills-TopDownHighlighted-TileColor66_71","origin":{"__type":"built-in"}},"coordinateSystem":"Path-Based Strict Coordinates"},"paths":[{"segments":[{"controls":[{"uid":"53szm7fs1r","x":63,"y":61,"lock":false,"visible":true,"heading":90,"__type":"end-point"},{"uid":"schbxcwmny","x":68.845,"y":59.979,"lock":false,"visible":true,"__type":"control"},{"uid":"r7box6qrud","x":67.898,"y":59.112,"lock":false,"visible":true,"__type":"control"},{"uid":"7kc3ir931u","x":69.277,"y":53.416,"lock":false,"visible":true,"heading":-20,"__type":"end-point"}],"speedProfiles":[],"lookaheadKeyframes":[],"uid":"kqnpyp8zq4"}],"pc":{"speedLimit":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":127,"label":"127"},"step":1,"from":35,"to":45},"bentRateApplicableRange":{"minLimit":{"value":0,"label":"0"},"maxLimit":{"value":1,"label":"1"},"step":0.001,"from":0,"to":0.1},"maxDecelerationRate":127},"name":"Yellow","uid":"i08yjdykxt","lock":false,"visible":true}]}

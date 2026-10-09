@@ -967,11 +967,11 @@ ASSET(yellow_txt);
 ASSET(green_txt);
 
 void autonomous() {
+/*
    liftAutonomousMode = true;
    enableLiftPID();
 
    chassis.setPose(0, 0, 180);
-   claw.move_voltage(12000);
 
    // Toggle roller while the claw runs.
    chassis.moveToPoint(0, 8, 500, {.forwards=false, .minSpeed = 33});
@@ -995,7 +995,7 @@ void autonomous() {
    claw.brake();
 
 
-      chassis.moveToPose(25, 41, -120, 6000, {.forwards=false, .lead=0});
+      chassis.moveToPose(25, 45, -150, 6000, {.forwards=false, .lead=0});
       moveArmAuton(-90);
     claw.move_voltage(12000);
     chassis.waitUntilDone();
@@ -1012,13 +1012,13 @@ void autonomous() {
    // Sweep around to the second toggle in one backward motion.
    chassis.follow(uturn_txt, 9, 6000, false);
    chassis.waitUntilDone();
-
+   */
    // Contact with the bottom wall fixes Y, but does not tell us X. Keep the
    // measured X; at this handoff the robot's front points right.
-   const lemlib::Pose wallPose = chassis.getPose();
-   chassis.setPose(wallPose.x, 61, 90);
+   chassis.setPose(63, 61, 90);
    chassis.follow(yellow_txt, 4.5, 3000, true);
    chassis.waitUntilDone();
+   /*
    claw.move_voltage(12000);
    // Green heads west. Follow it backwards to keep the front pointing right
    // at the handoff instead of turning beside the bottom wall.
@@ -1113,6 +1113,7 @@ void autonomous() {
    chassis.setPose(-13.5, -37.5, 90);
    pros::delay(1000);
    chassis.moveToPose(48, 24, 45, 6000);
+*/
 
 }
 
