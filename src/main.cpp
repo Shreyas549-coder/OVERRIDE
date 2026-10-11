@@ -605,52 +605,48 @@ void lift_DOWN(float time) {
 
 
 const double SLOW_ZONE_DELTA = 40.0;
-const double HOLD_ZONE_DELTA = 5.0;
+const double HOLD_ZONE_DELTA = 20.0;
+
 const int32_t MAX_SPEED = 12000;
-const int32_t APPROACH_SPEED = 5000;
+const int32_t APPROACH_SPEED = 2500;
 const int32_t GENTLE_HOLD = 3000;
 
-
-
-
 void moveArmAuton(double targetAngle, int timeoutMs = 2000) {
-   int elapsed = 0;
-   while (elapsed < timeoutMs) {
-       double current_pos = arm.get_position();
-       double error = targetAngle - current_pos;
+    int elapsed = 0;
 
+    while (elapsed < timeoutMs) {
+        double current_pos = arm.get_position();
+        double error = targetAngle - current_pos;
+        double distance = std::abs(error);
 
+        // Reached the target: actively hold against gravity.
+        if (distance <= HOLD_ZONE_DELTA) {
+            arm.move_voltage(targetAngle >= 0 ? GENTLE_HOLD : -GENTLE_HOLD);
+            return;
+        }
 
+        // Move toward the target.
+        int32_t direction = (error > 0) ? 1 : -1;
+        int32_t voltage;
 
-       if (targetAngle > 0) {
-           if (current_pos >= (targetAngle - HOLD_ZONE_DELTA)) {
-               arm.move_voltage(GENTLE_HOLD);
-               break;
-           } else if (current_pos >= (targetAngle - SLOW_ZONE_DELTA)) {
-               arm.move_voltage(APPROACH_SPEED);
-           } else {
-               arm.move_voltage(MAX_SPEED);
-           }
-       } else if (targetAngle < 0) {
-           if (current_pos <= (targetAngle + HOLD_ZONE_DELTA)) {
-               arm.move_voltage(-GENTLE_HOLD);
-               break;
-           } else if (current_pos <= (targetAngle + SLOW_ZONE_DELTA)) {
-               arm.move_voltage(-APPROACH_SPEED);
-           } else {
-               arm.move_voltage(-MAX_SPEED);
-           }
-       } else {
-           if (std::abs(error) < 3.0) {
-               arm.move_voltage(0);
-               break;
-           }
-           arm.move_voltage((error > 0) ? APPROACH_SPEED : -APPROACH_SPEED);
-       }
-       pros::delay(20);
-       elapsed += 20;
-   }
+        // Full power far away; reduce power when approaching.
+        if (distance > SLOW_ZONE_DELTA) {
+            voltage = MAX_SPEED;
+        } else {
+            voltage = APPROACH_SPEED;
+        }
+
+        arm.move_voltage(direction * voltage);
+
+        pros::delay(20);
+        elapsed += 20;
+    }
+
+    // If the timeout expires, keep applying holding voltage
+    // in the direction associated with the requested endpoint.
+    arm.move_voltage(targetAngle >= 0 ? GENTLE_HOLD : -GENTLE_HOLD);
 }
+
 
 
 // Flip to the other side while the lift rises, then settle at the requested
@@ -970,8 +966,9 @@ void autonomous() {
 
    liftAutonomousMode = true;
    enableLiftPID();
-/*
+
    chassis.setPose(0, 0, 180);
+   
    claw.move_voltage(12000);
 
    // Toggle roller while the claw runs.
@@ -993,11 +990,12 @@ void autonomous() {
    setLiftTarget(0);
    claw.move_voltage(-12000);
    pros::delay(300);
+   moveArmAuton(-90);
    claw.brake();
 
 
       chassis.moveToPose(25, 45, -150, 3000, {.forwards=false, .lead=0});
-      moveArmAuton(-90);
+      
     claw.move_voltage(12000);
     chassis.waitUntilDone();
     chassis.moveToPose(38, 41, 90, 2000, {.maxSpeed=55});
@@ -1013,7 +1011,7 @@ void autonomous() {
    // Sweep around to the second toggle in one backward motion.
    chassis.follow(uturn_txt, 12, 6000, false);
    chassis.waitUntilDone();
-   */
+   
 
    //Dont change above. Everything above works. DONT CHANGE
    //Dont FUCKING CHANGE IT
@@ -1024,28 +1022,19 @@ void autonomous() {
    
    // Contact with the bottom wall fixes Y, but does not tell us X. Keep the
    // measured X; at this handoff the robot's front points right.
-   /*
-   chassis.setPose(0,0,0);
-   chassis.moveToPoint(0, 12, 3000);
-   chassis.turnToHeading(135, 3000);
+   claw.move_voltage(12000);
+   moveArmAuton(-90);
+   chassis.setPose(0.601, -65.642, 0);
+   chassis.follow(yellow_txt, 10, 10000, true);
    chassis.waitUntilDone();
-   chassis.setPose(0.032, -56.976, 180);
-   chassis.follow(yellow_txt, 10, 4000, false);
-   chassis.waitUntilDone();
-   */
+   chassis.setPose(10.2, -53.831, 90);
+   followPathWithMechanisms(green_txt, 10, 6500, false, -90, false, 0, false);
+   
    
 
 
    //Part above is waiting for wall rider
 
-
-
-   claw.move_voltage(12000);
-   // Green heads west. Follow it backwards to keep the front pointing right
-   // at the handoff instead of turning beside the bottom wall.
-   followPathWithMechanisms(green_txt, 5, 6500, false, -90, false, 0, false);
-   claw.brake();
-   return; // Test these paths before restoring the scoring sequence below.
 
    // Previous scoring sequence, to be adapted after the new pickup path is tested.
    chassis.turnToHeading(0, 500, {.maxSpeed=80});
@@ -1057,6 +1046,8 @@ void autonomous() {
    chassis.waitUntilDone();
    setLiftTarget(60);
    claw.move_voltage(-12000);
+
+   //Above is good enough dont mess
 
    // Loader pin #3: use the scoring pose as a local origin for the pickup path.
    chassis.setPose(0,0,0);
@@ -1134,8 +1125,8 @@ void autonomous() {
    chassis.setPose(-13.5, -37.5, 90);
    pros::delay(1000);
    chassis.moveToPose(48, 24, 45, 6000);
-
-
+    
+    
 }
 
 
@@ -1403,11 +1394,9 @@ void opcontrol() {
 
 
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) {
-            claw.set_current_limit(2500);
            claw.move_voltage(12000);
        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
-            claw.set_current_limit(1000);
-           claw.move_voltage(-6000);
+           claw.move_voltage(-12000);
        } else {
            claw.brake();
        }
