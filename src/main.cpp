@@ -424,67 +424,233 @@ void disabled() {}
 void competition_initialize() {}
 
 
-const double SLOW_ZONE_DELTA = 40.0;
-const double HOLD_ZONE_DELTA = 20.0;
 
-const int32_t MAX_SPEED = 12000;
-const int32_t APPROACH_SPEED = 2500;
-const int32_t GENTLE_HOLD = 3000;
+const double ARM_TARGET_TOLERANCE = 4.0;
 
-void moveArmAuton(double targetAngle, int timeoutMs = 2000) {
+const int32_t ARM_MAX_VOLTAGE = 12000;
+const int32_t ARM_MEDIUM_VOLTAGE = 8000;
+const int32_t ARM_APPROACH_VOLTAGE = 4500;
+const int32_t ARM_FINAL_VOLTAGE = 2500;
+const int32_t ARM_HOLD_VOLTAGE = 3000;
+
+ void moveArmAutonWithLiftTrigger(double targetAngle, double liftPeakAngle, int timeoutMs = 3000) {
+    // The arm has only two valid targets.
+    targetAngle = (targetAngle >= 0) ? 90.0 : -90.0;
+
+    const double TOLERANCE = 4.0;
+    bool liftTriggered = false;
     int elapsed = 0;
 
     while (elapsed < timeoutMs) {
-        double current_pos = arm.get_position();
-        double error = targetAngle - current_pos;
-        double distance = std::abs(error);
+        double currentPos = arm.get_position();
+        double error = targetAngle - currentPos;
 
-        // Reached the target: actively hold against gravity.
-        if (distance <= HOLD_ZONE_DELTA) {
-            arm.move_voltage(targetAngle >= 0 ? GENTLE_HOLD : -GENTLE_HOLD);
+        // Trigger the lift when the arm crosses 30 degrees.
+        if (!liftTriggered &&
+            ((targetAngle > 0 && currentPos >= 30.0) ||
+             (targetAngle < 0 && currentPos <= -30.0))) {
+            setLiftTarget(liftPeakAngle);
+            liftTriggered = true;
+        }
+
+        // Stop the movement loop when the arm reaches its target.
+        if (std::fabs(error) <= TOLERANCE) {
+            arm.move_voltage(targetAngle > 0 ? 3000 : -3000);
             return;
         }
 
-        // Move toward the target.
-        int32_t direction = (error > 0) ? 1 : -1;
-        int32_t voltage;
+        // Full power throughout the entire arm movement.
+        arm.move_voltage(error > 0 ? 12000 : -12000);
 
-        // Full power far away; reduce power when approaching.
-        if (distance > SLOW_ZONE_DELTA) {
-            voltage = MAX_SPEED;
-        } else {
-            voltage = APPROACH_SPEED;
-        }
-
-        arm.move_voltage(direction * voltage);
-
-        pros::delay(20);
-        elapsed += 20;
+        pros::delay(10);
+        elapsed += 10;
     }
 
-    // If the timeout expires, keep applying holding voltage
-    // in the direction associated with the requested endpoint.
-    arm.move_voltage(targetAngle >= 0 ? GENTLE_HOLD : -GENTLE_HOLD);
+    // Maintain torque if the movement reaches its timeout.
+    arm.move_voltage(targetAngle > 0 ? 3000 : -3000);
 }
+
+
+void moveArmAuton(double targetAngle, int timeoutMs = 3000) {
+    targetAngle = (targetAngle >= 0) ? 90.0 : -90.0;
+
+    int elapsed = 0;
+
+    while (elapsed < timeoutMs) {
+        double currentPos = arm.get_position();
+        double error = targetAngle - currentPos;
+
+        if (std::fabs(error) <= ARM_TARGET_TOLERANCE) {
+            arm.move_voltage(targetAngle > 0
+                ? ARM_HOLD_VOLTAGE
+                : -ARM_HOLD_VOLTAGE);
+            return;
+        }
+
+        // Full voltage for the entire flip.
+        arm.move_voltage(error > 0
+            ? ARM_MAX_VOLTAGE
+            : -ARM_MAX_VOLTAGE);
+
+        pros::delay(10);
+        elapsed += 10;
+    }
+
+    arm.move_voltage(targetAngle > 0
+        ? ARM_HOLD_VOLTAGE
+        : -ARM_HOLD_VOLTAGE);
+}
+
+
 
 
 // Start the arm at 2 inches without blocking the 5-inch lift/intake trigger.
-void followPathWithMechanisms(const asset& path, float lookahead, int timeoutMs,
-                              bool forwards, double armAngle, bool moveLift,
-                              double liftAngle, bool startIntakeAtFive) {
-   chassis.follow(path, lookahead, timeoutMs, forwards);
-   chassis.waitUntil(2);
-   pros::Task armTask([armAngle]() { moveArmAuton(armAngle); });
 
-   if (moveLift || startIntakeAtFive) {
-      chassis.waitUntil(5);
-      if (moveLift) setLiftTarget(liftAngle);
-      if (startIntakeAtFive) claw.move_voltage(12000);
-   }
 
-   chassis.waitUntilDone();
-   armTask.join();
+void followPathWithMechanisms(const asset& path,
+    float lookahead,
+    int timeoutMs,
+    bool forwards,
+    double armAngle,
+    bool moveLift,
+    double releaseHeight,
+    bool startIntakeAtFive,
+    double armStartProgress = 2,
+    double lowerLiftProgress = -1,
+    double liftPeakAngle = -1,
+    int setsAlreadyScored = -1) {
+
+    const double MAX_LIFT_ANGLE = 250.0;
+    const double MAX_LIFT_HEIGHT = 29.5;
+    const double PEAK_ARC_INCHES = 2.0;
+
+    const int DATA_POINTS = 10;
+    const double measuredAngles[DATA_POINTS] = {
+        0, 30, 60, 90, 120, 150, 180, 210, 240, 250
+    };
+    const double measuredHeights[DATA_POINTS] = {
+        3, 4.5, 7.5, 10.5, 14, 17.5, 21, 27, 28.5, 29.5
+    };
+
+    auto heightToAngle = [&](double height) -> double {
+        if (height <= measuredHeights[0])
+            return measuredAngles[0];
+
+        if (height >= measuredHeights[DATA_POINTS - 1])
+            return measuredAngles[DATA_POINTS - 1];
+
+        for (int i = 0; i < DATA_POINTS - 1; i++) {
+            if (height <= measuredHeights[i + 1]) {
+                double fraction =
+                    (height - measuredHeights[i]) /
+                    (measuredHeights[i + 1] - measuredHeights[i]);
+
+                return measuredAngles[i] +
+                    fraction * (measuredAngles[i + 1] -
+                                measuredAngles[i]);
+            }
+        }
+
+        return MAX_LIFT_ANGLE;
+    };
+
+    // Convert stack level to the required release angle if supplied.
+    if (setsAlreadyScored >= 0) {
+        if (setsAlreadyScored > 3)
+            setsAlreadyScored = 3;
+
+        const double GOAL_LIP_HEIGHT = 3.25;
+        const double HEIGHT_PER_SET = 6.5;
+
+        double requiredHeight =
+            GOAL_LIP_HEIGHT + HEIGHT_PER_SET * setsAlreadyScored;
+
+        releaseHeight = heightToAngle(requiredHeight);
+    }
+
+    double releaseAngle = releaseHeight;
+
+    if (releaseAngle < 0)
+        releaseAngle = 0;
+    if (releaseAngle > MAX_LIFT_ANGLE)
+        releaseAngle = MAX_LIFT_ANGLE;
+
+    // Only calculate a peak for the +90-degree arm flip.
+    double peakAngle = releaseAngle;
+
+    if (armAngle >= 0) {
+        if (setsAlreadyScored >= 0) {
+            double releaseHeightInches =
+                3.25 + 6.5 * setsAlreadyScored;
+
+            double peakHeightInches =
+                releaseHeightInches + PEAK_ARC_INCHES;
+
+            if (peakHeightInches > MAX_LIFT_HEIGHT)
+                peakHeightInches = MAX_LIFT_HEIGHT;
+
+            peakAngle = heightToAngle(peakHeightInches);
+        } else if (liftPeakAngle >= 0) {
+            peakAngle = liftPeakAngle;
+        } else {
+            double currentHeight = 3.0;
+
+            for (int i = 0; i < DATA_POINTS - 1; i++) {
+                if (releaseAngle <= measuredAngles[i + 1]) {
+                    double fraction =
+                        (releaseAngle - measuredAngles[i]) /
+                        (measuredAngles[i + 1] - measuredAngles[i]);
+
+                    currentHeight =
+                        measuredHeights[i] +
+                        fraction * (measuredHeights[i + 1] -
+                                    measuredHeights[i]);
+                    break;
+                }
+            }
+
+            peakAngle = heightToAngle(
+                fmin(currentHeight + PEAK_ARC_INCHES,
+                     MAX_LIFT_HEIGHT));
+        }
+    }
+
+    if (peakAngle > MAX_LIFT_ANGLE)
+        peakAngle = MAX_LIFT_ANGLE;
+
+    chassis.follow(path, lookahead, timeoutMs, forwards);
+
+    chassis.waitUntil(armStartProgress);
+
+    // NEGATIVE arm target: command the release target directly.
+    // POSITIVE arm target: use the peak to create the overshoot.
+    if (moveLift) {
+        if (armAngle < 0)
+            setLiftTarget(releaseAngle);
+        else
+            setLiftTarget(peakAngle);
+    }
+
+    pros::Task armTask([armAngle]() {
+        moveArmAuton(armAngle);
+    });
+
+    if (startIntakeAtFive)
+        claw.move_voltage(12000);
+
+    // Only the positive arm flip uses the timed lowering checkpoint.
+    if (moveLift && armAngle >= 0 && lowerLiftProgress >= 0) {
+        chassis.waitUntil(lowerLiftProgress);
+        setLiftTarget(releaseAngle);
+    }
+
+    chassis.waitUntilDone();
+    armTask.join();
 }
+
+
+
+
 
 ASSET(loader_txt);
 ASSET(goal_txt);
@@ -499,164 +665,172 @@ void autonomous() {
    liftAutonomousMode = true;
    enableLiftPID();
 
-   chassis.setPose(0, 0, 180);
+   //chassis.setPose(0, 0, 180);
    
-   claw.move_voltage(12000);
+   
+//    claw.move_voltage(12000);
 
-   // Toggle roller while the claw runs.
-   chassis.moveToPoint(0, 8, 500, {.forwards=false, .minSpeed = 33});
-   moveArmAuton(90);
-   chassis.turnToHeading(0, 750, {.maxSpeed=60});
-   chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
-   pros::delay(500);
-   chassis.moveToPoint(0, 6, 500, {.minSpeed = 33});
-   pros::delay(500);
-   chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
-   pros::delay(500);
+//    // Toggle roller while the claw runs.
+//    chassis.moveToPoint(0, 8, 500, {.forwards=false, .minSpeed = 33});
+//    moveArmAuton(90);
+//    chassis.turnToHeading(0, 750, {.maxSpeed=60});
+//    chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
+//    pros::delay(500);
+//    chassis.moveToPoint(0, 6, 500, {.minSpeed = 33});
+//    pros::delay(500);
+//    chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
+//    pros::delay(500);
 
-   // Score the preload, then lower the lift before releasing it.
-   setLiftTarget(100);
-   chassis.moveToPose(-24, 16, -90, 1500, {.lead = 0.4, .maxSpeed = 70, .minSpeed = 30});
-   moveArmAuton(90);
-   chassis.waitUntilDone();
-   setLiftTarget(0);
-   claw.move_voltage(-12000);
-   pros::delay(300);
-   moveArmAuton(-90);
-   claw.brake();
+//    // Score the preload, then lower the lift before releasing it.
+//    setLiftTarget(100);
+//    chassis.moveToPose(-24, 16, -90, 1500, {.lead = 0.4, .maxSpeed = 70, .minSpeed = 30});
+//    moveArmAuton(90);
+//    chassis.waitUntilDone();
+//    setLiftTarget(0);
+//    claw.move_voltage(-12000);
+//    pros::delay(300);
+//    moveArmAuton(-90);
+//    claw.brake();
 
 
-      chassis.moveToPose(25, 45, -150, 3000, {.forwards=false, .lead=0});
+//       chassis.moveToPose(25, 45, -150, 3000, {.forwards=false, .lead=0});
       
-    claw.move_voltage(12000);
-    chassis.waitUntilDone();
-    chassis.moveToPose(38, 41, 90, 2000, {.maxSpeed=55});
-   moveArmAuton(90);
-   pros::delay(100);
-   setLiftTarget(60);
-   chassis.waitUntilDone();
-   setLiftTarget(0);
-   pros::delay(200);
-   claw.move_voltage(-12000);
-   // Re-anchor at the first-goal scoring pose used to tune the U-turn.
-   chassis.setPose(-23.614, -39.576, 180);
-   // Sweep around to the second toggle in one backward motion.
-   chassis.follow(uturn_txt, 12, 6000, false);
-   chassis.waitUntilDone();
+//     claw.move_voltage(12000);
+//     chassis.waitUntilDone();
+//     chassis.moveToPose(38, 41, 90, 2000, {.maxSpeed=55});
+//    moveArmAuton(90);
+//    pros::delay(100);
+//    setLiftTarget(60);
+//    chassis.waitUntilDone();
+//    setLiftTarget(0);
+//    pros::delay(200);
+//    claw.move_voltage(-12000);
+//    // Re-anchor at the first-goal scoring pose used to tune the U-turn.
+//    chassis.setPose(-23.614, -39.576, 180);
+//    // Sweep around to the second toggle in one backward motion.
+//    chassis.follow(uturn_txt, 12, 6000, false);
+//    chassis.waitUntilDone();
    
 
-   //Dont change above. Everything above works. DONT CHANGE
-   //Dont FUCKING CHANGE IT
-   //Dont FUCKING CHANGE IT
-   //Dont FUCKING CHANGE IT
-   //Dont FUCKING CHANGE IT
+//    //Dont change above. Everything above works. DONT CHANGE
+//    //Dont FUCKING CHANGE IT
+//    //Dont FUCKING CHANGE IT
+//    //Dont FUCKING CHANGE IT
+//    //Dont FUCKING CHANGE IT
 
    
-   // Contact with the bottom wall fixes Y, but does not tell us X. Keep the
-   // measured X; at this handoff the robot's front points right.
-   claw.move_voltage(12000);
-   moveArmAuton(-90);
-   chassis.setPose(0.601, -65.642, 0);
-   chassis.follow(yellow_txt, 10, 10000, true);
-   chassis.waitUntilDone();
-   chassis.setPose(10.2, -53.831, 90);
-   followPathWithMechanisms(green_txt, 10, 6500, false, -90, false, 0, false);
+//    // Contact with the bottom wall fixes Y, but does not tell us X. Keep the
+//    // measured X; at this handoff the robot's front points right.
+//    claw.move_voltage(12000);
+//    moveArmAuton(-90);
+//    chassis.setPose(0.601, -65.642, 0);
+//    chassis.follow(yellow_txt, 10, 10000, true);
+//    chassis.waitUntilDone();
+//    chassis.setPose(10.2, -53.831, 90);
+//    followPathWithMechanisms(green_txt, 10, 6500, false, -90, false, 0, false);
    
    
 
 
-   //Part above is waiting for wall rider
+//    //Part above is waiting for wall rider
 
 
-   // Previous scoring sequence, to be adapted after the new pickup path is tested.
-   chassis.turnToHeading(0, 500, {.maxSpeed=80});
-   chassis.moveToPose(52, 33, 0, 1500, {.lead=0, .maxSpeed=80});
-   moveArmAuton(90);
-   pros::delay(100);
+//    // Previous scoring sequence, to be adapted after the new pickup path is tested.
+//    chassis.turnToHeading(0, 500, {.maxSpeed=80});
+//    chassis.moveToPose(52, 33, 0, 1500, {.lead=0, .maxSpeed=80});
+//    moveArmAuton(90);
+//    pros::delay(100);
+//    setLiftTarget(90);
+//    chassis.moveToPose(52, 33, 0, 1500, {.maxSpeed=80});
+//    chassis.waitUntilDone();
+//    setLiftTarget(60);
+//    claw.move_voltage(-12000);
+
+//    //Above is good enough dont mess
+
+//    // Loader pin #3: use the scoring pose as a local origin for the pickup path.
+   chassis.setPose(0,0,0);
    setLiftTarget(90);
-   chassis.moveToPose(52, 33, 0, 1500, {.maxSpeed=80});
-   chassis.waitUntilDone();
-   setLiftTarget(60);
-   claw.move_voltage(-12000);
-
-   //Above is good enough dont mess
-
-   // Loader pin #3: use the scoring pose as a local origin for the pickup path.
-   chassis.setPose(0,0,0);
-    followPathWithMechanisms(loader_txt, 8, 3000, false, -90, true, 0, true);
+   moveArmAuton(90);
    pros::delay(1000);
-   followPathWithMechanisms(goal_txt, 8, 3000, true, 90, true, 120, false);
+    followPathWithMechanisms(loader_txt, 8, 3000, false, -90, true, 0, true, 0);
+   pros::delay(1000);
+    followPathWithMechanisms(
+     goal_txt, 8, 3000, true,
+     90, true, 60, false,
+     14, 26, 120, 0
+ );
    claw.move_voltage(-12000);
    pros::delay(1000);
    claw.move_voltage(0);
 
-   // Loader pin #4: repeat the lane entry and raise to 150 on the way out.
-   followPathWithMechanisms(loader_txt, 8, 3000, false, -90, true, 0, true);
-   pros::delay(1000);
-   followPathWithMechanisms(goal_txt, 8, 3000, true, 90, true, 120, false);
-   claw.move_voltage(-12000);
-   pros::delay(1000);
-   claw.move_voltage(0);
+//    // Loader pin #4: repeat the lane entry and raise to 150 on the way out.
+//    followPathWithMechanisms(loader_txt, 8, 3000, false, -90, true, 0, true);
+//    pros::delay(1000);
+//    followPathWithMechanisms(goal_txt, 8, 3000, true, 90, true, 120, false);
+//    claw.move_voltage(-12000);
+//    pros::delay(1000);
+//    claw.move_voltage(0);
 
-   // Loader pin #5: the pictured goal is the origin of this new path pair.
-   followPathWithMechanisms(loader_txt, 8, 6000, false, -90, true, 0, true);
-   chassis.setPose(-13.5, -37.5, 90);
-   pros::delay(1000);
-   followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
-   setLiftTarget(0);
-   claw.move_voltage(-12000);
-   pros::delay(500);
-   claw.brake();
+//    // Loader pin #5: the pictured goal is the origin of this new path pair.
+//    followPathWithMechanisms(loader_txt, 8, 6000, false, -90, true, 0, true);
+//    chassis.setPose(-13.5, -37.5, 90);
+//    pros::delay(1000);
+//    followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
+//    setLiftTarget(0);
+//    claw.move_voltage(-12000);
+//    pros::delay(500);
+//    claw.brake();
 
 
-   //Loader 6
-   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-   chassis.waitUntilDone();
-   chassis.setPose(0,0,0);
-   followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
-   pros::delay(1000);
-   // The robot is stationary at the loader; anchor the return to goal2's start.
-   chassis.setPose(-14.5, -37, 90);
-   followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
-   setLiftTarget(0);
-   claw.move_voltage(-12000);
-   pros::delay(500);
-   claw.brake();
+//    //Loader 6
+//    chassis.turnToHeading(0, 1000, {.maxSpeed=45});
+//    chassis.waitUntilDone();
+//    chassis.setPose(0,0,0);
+//    followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
+//    pros::delay(1000);
+//    // The robot is stationary at the loader; anchor the return to goal2's start.
+//    chassis.setPose(-14.5, -37, 90);
+//    followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
+//    setLiftTarget(0);
+//    claw.move_voltage(-12000);
+//    pros::delay(500);
+//    claw.brake();
 
-   //Loader 7
-   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-   chassis.waitUntilDone();
-   chassis.setPose(0,0,0);
-   followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
-   pros::delay(1000);
-   chassis.setPose(-14.5, -37, 90);
-   followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
-   setLiftTarget(0);
-   claw.move_voltage(-12000);
-   pros::delay(500);
-   claw.brake();
+//    //Loader 7
+//    chassis.turnToHeading(0, 1000, {.maxSpeed=45});
+//    chassis.waitUntilDone();
+//    chassis.setPose(0,0,0);
+//    followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
+//    pros::delay(1000);
+//    chassis.setPose(-14.5, -37, 90);
+//    followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
+//    setLiftTarget(0);
+//    claw.move_voltage(-12000);
+//    pros::delay(500);
+//    claw.brake();
 
-   //Loader 8
-   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-   chassis.waitUntilDone();
-   chassis.setPose(0,0,0);
-   followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
-   pros::delay(1000);
-   chassis.setPose(-14.5, -37, 90);
-   followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
-   setLiftTarget(0);
-   claw.move_voltage(-12000);
-   pros::delay(500);
-   claw.brake();
+//    //Loader 8
+//    chassis.turnToHeading(0, 1000, {.maxSpeed=45});
+//    chassis.waitUntilDone();
+//    chassis.setPose(0,0,0);
+//    followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
+//    pros::delay(1000);
+//    chassis.setPose(-14.5, -37, 90);
+//    followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
+//    setLiftTarget(0);
+//    claw.move_voltage(-12000);
+//    pros::delay(500);
+//    claw.brake();
 
-   // Middle Pin
-   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-   chassis.waitUntilDone();
-   chassis.setPose(0,0,0);
-   followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
-   chassis.setPose(-13.5, -37.5, 90);
-   pros::delay(1000);
-   chassis.moveToPose(48, 24, 45, 6000);
+//    // Middle Pin
+//    chassis.turnToHeading(0, 1000, {.maxSpeed=45});
+//    chassis.waitUntilDone();
+//    chassis.setPose(0,0,0);
+//    followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
+//    chassis.setPose(-13.5, -37.5, 90);
+//    pros::delay(1000);
+//    chassis.moveToPose(48, 24, 45, 6000);
     
     
 }
