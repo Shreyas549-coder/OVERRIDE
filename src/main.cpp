@@ -574,381 +574,224 @@ void competition_initialize() {}
 
 
 
+const double ARM_TARGET_TOLERANCE = 4.0;
 
-ASSET(example_txt);
+const int32_t ARM_MAX_VOLTAGE = 12000;
+const int32_t ARM_MEDIUM_VOLTAGE = 8000;
+const int32_t ARM_APPROACH_VOLTAGE = 4500;
+const int32_t ARM_FINAL_VOLTAGE = 2500;
+const int32_t ARM_HOLD_VOLTAGE = 3000;
 
+ void moveArmAutonWithLiftTrigger(double targetAngle, double liftPeakAngle, int timeoutMs = 3000) {
+    // The arm has only two valid targets.
+    targetAngle = (targetAngle >= 0) ? 90.0 : -90.0;
 
-
-
-// Old open loop lift helpers. These fight the PID task, so only use them with
-// liftPIDEnabled false.
-void lift_UP(float time) {
-   liftLeft.move_voltage(8000);
-   liftRight.move_voltage(8000);
-   pros::delay(time);
-   liftRight.brake();
-   liftLeft.brake();
-}
-
-
-
-
-void lift_DOWN(float time) {
-   liftLeft.move_voltage(-3000);
-   liftRight.move_voltage(-3000);
-   pros::delay(time);
-   liftRight.brake();
-   liftLeft.brake();
-}
-
-
-
-
-const double SLOW_ZONE_DELTA = 40.0;
-const double HOLD_ZONE_DELTA = 20.0;
-
-const int32_t MAX_SPEED = 12000;
-const int32_t APPROACH_SPEED = 2500;
-const int32_t GENTLE_HOLD = 3000;
-
-void moveArmAuton(double targetAngle, int timeoutMs = 2000) {
+    const double TOLERANCE = 4.0;
+    bool liftTriggered = false;
     int elapsed = 0;
 
     while (elapsed < timeoutMs) {
-        double current_pos = arm.get_position();
-        double error = targetAngle - current_pos;
-        double distance = std::abs(error);
+        double currentPos = arm.get_position();
+        double error = targetAngle - currentPos;
 
-        // Reached the target: actively hold against gravity.
-        if (distance <= HOLD_ZONE_DELTA) {
-            arm.move_voltage(targetAngle >= 0 ? GENTLE_HOLD : -GENTLE_HOLD);
+        // Trigger the lift when the arm crosses 30 degrees.
+        if (!liftTriggered &&
+            ((targetAngle > 0 && currentPos >= 30.0) ||
+             (targetAngle < 0 && currentPos <= -30.0))) {
+            setLiftTarget(liftPeakAngle);
+            liftTriggered = true;
+        }
+
+        // Stop the movement loop when the arm reaches its target.
+        if (std::fabs(error) <= TOLERANCE) {
+            arm.move_voltage(targetAngle > 0 ? 3000 : -3000);
             return;
         }
 
-        // Move toward the target.
-        int32_t direction = (error > 0) ? 1 : -1;
-        int32_t voltage;
+        // Full power throughout the entire arm movement.
+        arm.move_voltage(error > 0 ? 12000 : -12000);
 
-        // Full power far away; reduce power when approaching.
-        if (distance > SLOW_ZONE_DELTA) {
-            voltage = MAX_SPEED;
-        } else {
-            voltage = APPROACH_SPEED;
-        }
-
-        arm.move_voltage(direction * voltage);
-
-        pros::delay(20);
-        elapsed += 20;
+        pros::delay(10);
+        elapsed += 10;
     }
 
-    // If the timeout expires, keep applying holding voltage
-    // in the direction associated with the requested endpoint.
-    arm.move_voltage(targetAngle >= 0 ? GENTLE_HOLD : -GENTLE_HOLD);
+    // Maintain torque if the movement reaches its timeout.
+    arm.move_voltage(targetAngle > 0 ? 3000 : -3000);
+}
+
+
+void moveArmAuton(double targetAngle, int timeoutMs = 3000) {
+    targetAngle = (targetAngle >= 0) ? 90.0 : -90.0;
+
+    int elapsed = 0;
+
+    while (elapsed < timeoutMs) {
+        double currentPos = arm.get_position();
+        double error = targetAngle - currentPos;
+
+        if (std::fabs(error) <= ARM_TARGET_TOLERANCE) {
+            arm.move_voltage(targetAngle > 0
+                ? ARM_HOLD_VOLTAGE
+                : -ARM_HOLD_VOLTAGE);
+            return;
+        }
+
+        // Full voltage for the entire flip.
+        arm.move_voltage(error > 0
+            ? ARM_MAX_VOLTAGE
+            : -ARM_MAX_VOLTAGE);
+
+        pros::delay(10);
+        elapsed += 10;
+    }
+
+    arm.move_voltage(targetAngle > 0
+        ? ARM_HOLD_VOLTAGE
+        : -ARM_HOLD_VOLTAGE);
 }
 
 
 
-// Flip to the other side while the lift rises, then settle at the requested
-// scoring angle when the arm passes upright (0 degrees).
-void scorePin(double finalLiftAngle, int timeoutMs = 2500) {
-   if (!std::isfinite(finalLiftAngle)) return;
-   finalLiftAngle = std::clamp(finalLiftAngle, LIFT_MIN, LIFT_MAX);
-
-   const double startAngle = arm.get_position();
-   if (!std::isfinite(startAngle)) return;
-   const int direction = startAngle < 0 ? 1 : -1;
-   const double armTarget = direction * 90.0;
-   const double raisedLiftAngle = std::min(finalLiftAngle + 30.0, LIFT_MAX);
-   bool liftRaised = false;
-   bool passedUpright = false;
-   bool armAtTarget = false;
-
-   int elapsed = 0;
-   for (; elapsed < timeoutMs; elapsed += 20) {
-       const double armAngle = arm.get_position();
-       if (!std::isfinite(armAngle)) break;
-
-       // Give the arm a 15-degree head start, then let the lift rise in parallel.
-       if (!liftRaised && direction * (armAngle - startAngle) >= 15.0 &&
-           direction * armAngle < 0) {
-           setLiftTarget(raisedLiftAngle);
-           liftRaised = true;
-       }
-       if (!passedUpright && direction * armAngle >= 0) {
-           setLiftTarget(finalLiftAngle);
-           passedUpright = true;
-       }
-
-       const double remaining = direction * (armTarget - armAngle);
-       if (remaining <= HOLD_ZONE_DELTA) {
-           arm.move_voltage(direction * GENTLE_HOLD);
-           armAtTarget = true;
-           break;
-       }
-       const int32_t voltage = remaining <= SLOW_ZONE_DELTA
-                                   ? APPROACH_SPEED : MAX_SPEED;
-       arm.move_voltage(direction * voltage);
-       pros::delay(20);
-   }
-
-   // Keep the requested angle as the final PID target, even after a timeout.
-   setLiftTarget(finalLiftAngle);
-   if (!armAtTarget) arm.move_voltage(0);
-   if (armAtTarget) {
-       waitUntilLiftAt(3.0, timeoutMs - elapsed);
-   }
-}
-
-
-
-
-// =====================================================================
-// DISTANCE SENSOR ODOMETRY RESET
-// =====================================================================
-//
-// Corrects ONE axis of the odometry pose by measuring a wall whose field
-// coordinate you already know, using the right hand sensor on port 15.
-//
-// Three things have to be accounted for or the "correction" leaves odom worse
-// than not touching it:
-//
-//   1. Robot heading. The sensor turns with the robot, so the beam direction in
-//      FIELD coordinates is the robot heading plus the mounting angle.
-//   2. Mounting angle. Right facing is 90 degrees clockwise of robot forward.
-//   3. Mounting offset. The sensor does not sit at the tracking center, so its
-//      field position is the robot pose plus that offset rotated into the field
-//      frame. Skipping this bakes an error into every reset, and because the
-//      offset rotates with the robot the error changes sign as it turns, which
-//      is nastier than a fixed bias.
-//
-// It also handles the beam striking the wall at an angle, which is the part that
-// usually gets missed. A sensor 10 inches from a wall reads 10 only when it is
-// square to it; at 30 degrees off it reads 11.5. Projecting the beam vector onto
-// the wall normal takes care of that on its own.
-//
-// ASSUMPTION worth being explicit about: this trusts the heading and corrects
-// only position. One distance sensor cannot tell a heading error apart from a
-// position error, so if the IMU has drifted this will confidently write in a
-// wrong answer. Guard rails below reject the readings most likely to be junk,
-// but they cannot catch a bad heading.
-//
-// Usage, e.g. squaring up on the right wall at x = 72 before a scoring run:
-//     DistanceFix fix = resetOdomFromWall(Wall::PlusX, 72.0);
-//     if (!fix.ok) { /* fix.reason says why, odom left untouched */ }
-
-
-// ---- MEASURE THESE ON THE ROBOT, they are guesses ----
-// Offsets from the TRACKING CENTER, the point odom actually reports, in inches.
-const double DIST_OFFSET_FORWARD = 0.0;   // + toward the front of the robot
-const double DIST_OFFSET_RIGHT   = 6.5;   // + toward the right of the robot
-// Mounting angle relative to robot forward, degrees clockwise.
-// 90 means pointing straight out the right side.
-const double DIST_SENSOR_ANGLE   = 90.0;
-
-// TODO: Measure the left sensor offsets from the tracking center, in inches.
-const double LEFT_DIST_OFFSET_FORWARD = 0.0;
-const double LEFT_DIST_OFFSET_RIGHT = -6.5; // negative means left; provisional
-const double LEFT_DIST_SENSOR_ANGLE = -90.0;
-// TODO: Set the negative-Y wall coordinate in YOUR odometry frame.
-// NAN disables this reset until configured; -72 only fits a field-centered origin.
-const double LOADER2_WALL_Y = NAN;
-
-// Sensor mounting geometry relative to the tracking center.
-struct DistanceMount {
-    double forward;
-    double right;
-    double angle;
-};
-const DistanceMount RIGHT_DISTANCE_MOUNT{
-    DIST_OFFSET_FORWARD, DIST_OFFSET_RIGHT, DIST_SENSOR_ANGLE};
-const DistanceMount LEFT_DISTANCE_MOUNT{
-    LEFT_DIST_OFFSET_FORWARD, LEFT_DIST_OFFSET_RIGHT, LEFT_DIST_SENSOR_ANGLE};
-
-// Which wall face the beam is pointed at. Names are the direction of the wall's
-// outward axis, so PlusX is the wall you reach by driving toward +x.
-enum class Wall { PlusX, MinusX, PlusY, MinusY };
-
-struct DistanceFix {
-   bool ok;
-   double measured;      // where the sensor put the wall, in field coordinates
-   double correction;    // how far the pose was moved, 0 when rejected
-   double spread;        // inches between the closest and furthest sample
-   const char* reason;   // why it was rejected
-};
-
-
-// Anything slower than this counts as stopped, in RPM.
-const double DIST_STILL_RPM = 5.0;
-
-// This reset is only meant to run with the robot stationary. If the drivetrain
-// is still turning, the samples are smeared across a moving vantage point and
-// the pose is shifting out from under the correction as it is applied.
-// Checks the first motor of each side, which is enough to catch a chassis that
-// is still coasting or a motion that was never waited on.
-static bool driveIsStopped() {
-   return std::fabs(leftMotors.get_actual_velocity()) < DIST_STILL_RPM &&
-          std::fabs(rightMotors.get_actual_velocity()) < DIST_STILL_RPM;
-}
-
-
-// Median plus spread. Because the robot is stationary the samples SHOULD agree
-// closely, so how much they disagree is real information: a wide spread means
-// the beam is catching an edge, a gap, or something reflective. A median on its
-// own would quietly hide exactly that, which is why the spread comes back too.
-static std::int32_t distanceMedianMM(pros::Distance& sensor, int samples, std::int32_t& spreadMM) {
-   std::int32_t v[15];
-   if (samples > 15) samples = 15;
-   if (samples < 1) samples = 1;
-   for (int i = 0; i < samples; i++) {
-       v[i] = sensor.get_distance();
-       if (v[i] == PROS_ERR || v[i] <= 0 || v[i] >= 9999) {
-           spreadMM = 0;
-           return v[i];
-       }
-       if (i + 1 < samples) pros::delay(10);
-   }
-   std::sort(v, v + samples);
-   spreadMM = v[samples - 1] - v[0];
-   return v[samples / 2];
-}
-
-
-// Samples default to 9 rather than a handful, because standing still costs
-// nothing but 80 ms and more samples make both the median and the spread mean
-// something.
-static DistanceFix resetOdomFromSensor(pros::Distance& sensor,
-                              double offsetForward, double offsetRight,
-                              double sensorAngle, Wall wall, double wallCoord,
-                              double maxCorrection = 6.0,
-                              int minConfidence = 40,
-                              int samples = 9,
-                              double maxSpreadIn = 0.6) {
-   DistanceFix r{false, 0.0, 0.0, 0.0, "ok"};
-
-   if (!driveIsStopped()) {
-       r.reason = "robot still moving, call waitUntilDone first";
-       return r;
-   }
-
-   std::int32_t spreadMM = 0;
-   std::int32_t mm = distanceMedianMM(sensor, samples, spreadMM);
-   r.spread = spreadMM / 25.4;
-
-   if (mm == PROS_ERR || mm <= 0) { r.reason = "sensor error, check distance sensor port"; return r; }
-   if (mm >= 9999) { r.reason = "nothing in range"; return r; }
-   // Confidence is only meaningful past 200 mm, per the PROS docs.
-   const auto confidence = sensor.get_confidence();
-   if (mm > 200 && (confidence == PROS_ERR || confidence < minConfidence)) {
-       r.reason = "low confidence"; return r;
-   }
-   // Standing still, a flat wall reads within a few mm. Disagreement past this
-   // means the beam is not on a flat wall, so the median is not worth trusting.
-   if (r.spread > maxSpreadIn) {
-       r.reason = "samples disagree, beam not on a flat wall";
-       return r;
-   }
-
-   const double DEG = 3.14159265358979323846 / 180.0;
-   double d = mm / 25.4;   // the sensor reports millimetres, odom is in inches
-
-   lemlib::Pose p = chassis.getPose();
-
-   // LemLib heading is a compass bearing: 0 is +y, clockwise positive.
-   // So forward is (sin, cos) and right is that turned 90 clockwise.
-   double th = p.theta * DEG;
-   double fx = std::sin(th),  fy = std::cos(th);
-   double rx = std::cos(th),  ry = -std::sin(th);
-
-   // (1) and (3): where the sensor actually is, in field coordinates
-   double sx = p.x + fx * offsetForward + rx * offsetRight;
-   double sy = p.y + fy * offsetForward + ry * offsetRight;
-
-   // (2): where the beam is pointed, in field coordinates
-   double bth = (p.theta + sensorAngle) * DEG;
-   double bx = std::sin(bth), by = std::cos(bth);
-
-   // where the beam says it struck
-   double hx = sx + bx * d;
-   double hy = sy + by * d;
-
-   bool xAxis = (wall == Wall::PlusX || wall == Wall::MinusX);
-   double along = xAxis ? bx : by;   // beam component along the wall normal
-   double hit = xAxis ? hx : hy;
-
-   // A beam nearly parallel to the wall carries almost no information about that
-   // axis, and a small heading error there turns into a huge position error. It
-   // also has to be pointed AT the named wall, not away from it. 0.5 is 60
-   // degrees off perpendicular, which is about as oblique as is still useful.
-   double towardWall = (wall == Wall::PlusX || wall == Wall::PlusY) ? along : -along;
-   if (towardWall < 0.5) { r.reason = "beam too oblique or facing away"; return r; }
-
-   double correction = wallCoord - hit;
-
-   // A big correction almost always means the beam found a robot or a game
-   // element rather than the wall. Refuse it rather than teleport the pose.
-   if (std::fabs(correction) > maxCorrection) {
-       r.measured = hit;
-       r.reason = "correction too large, probably not the wall";
-       return r;
-   }
-
-   if (xAxis) chassis.setPose(p.x + correction, p.y, p.theta);
-   else chassis.setPose(p.x, p.y + correction, p.theta);
-
-   r.ok = true;
-   r.measured = hit;
-   r.correction = correction;
-   return r;
-}
-// Explicit sensor and mounting geometry for resets using either sensor.
-DistanceFix resetOdomFromWall(pros::Distance& sensor, const DistanceMount& mount,
-                              Wall wall, double wallCoord,
-                              double maxCorrection = 6.0,
-                              int minConfidence = 40,
-                              int samples = 9,
-                              double maxSpreadIn = 0.6) {
-    return resetOdomFromSensor(sensor, mount.forward, mount.right, mount.angle,
-                              wall, wallCoord, maxCorrection, minConfidence,
-                              samples, maxSpreadIn);
-}
-
-// Existing right-side API and defaults are preserved.
-DistanceFix resetOdomFromWall(Wall wall, double wallCoord,
-                              double maxCorrection = 6.0,
-                              int minConfidence = 40,
-                              int samples = 9,
-                              double maxSpreadIn = 0.6) {
-    return resetOdomFromSensor(rightDistance, DIST_OFFSET_FORWARD,
-                              DIST_OFFSET_RIGHT, DIST_SENSOR_ANGLE, wall,
-                              wallCoord, maxCorrection, minConfidence,
-                              samples, maxSpreadIn);
-}
-
-// Call while stopped, with the selected sensor facing the +X wall.
-// Always pass the matching mount so the correct offset and beam angle are used.
-DistanceFix resetAtGoal1(pros::Distance& sensor, const DistanceMount& mount) {
-    return resetOdomFromWall(sensor, mount, Wall::PlusX, 18, 4.0);
-}
-
-// Same wall, baseline, and correction limit as goal 1.
-DistanceFix resetAtGoal2(pros::Distance& sensor, const DistanceMount& mount) {
-    return resetOdomFromWall(sensor, mount, Wall::PlusX, 18, 4.0);
-}
 
 // Start the arm at 2 inches without blocking the 5-inch lift/intake trigger.
-void followPathWithMechanisms(const asset& path, float lookahead, int timeoutMs,
-                              bool forwards, double armAngle, bool moveLift,
-                              double liftAngle, bool startIntakeAtFive) {
-   chassis.follow(path, lookahead, timeoutMs, forwards);
-   chassis.waitUntil(2);
-   pros::Task armTask([armAngle]() { moveArmAuton(armAngle); });
 
-   if (moveLift || startIntakeAtFive) {
-      chassis.waitUntil(5);
-      if (moveLift) setLiftTarget(liftAngle);
-      if (startIntakeAtFive) claw.move_voltage(12000);
-   }
+
+void followPathWithMechanisms(const asset& path,
+    float lookahead,
+    int timeoutMs,
+    bool forwards,
+    double armAngle,
+    bool moveLift,
+    double releaseHeight,
+    bool startIntakeAtFive,
+    double armStartProgress = 2,
+    double lowerLiftProgress = -1,
+    double liftPeakAngle = -1,
+    int setsAlreadyScored = -1) {
+
+    const double MAX_LIFT_ANGLE = 250.0;
+    const double MAX_LIFT_HEIGHT = 29.5;
+    const double PEAK_ARC_INCHES = 2.0;
+
+    const int DATA_POINTS = 10;
+    const double measuredAngles[DATA_POINTS] = {
+        0, 30, 60, 90, 120, 150, 180, 210, 240, 250
+    };
+    const double measuredHeights[DATA_POINTS] = {
+        3, 4.5, 7.5, 10.5, 14, 17.5, 21, 27, 28.5, 29.5
+    };
+
+    auto heightToAngle = [&](double height) -> double {
+        if (height <= measuredHeights[0])
+            return measuredAngles[0];
+
+        if (height >= measuredHeights[DATA_POINTS - 1])
+            return measuredAngles[DATA_POINTS - 1];
+
+        for (int i = 0; i < DATA_POINTS - 1; i++) {
+            if (height <= measuredHeights[i + 1]) {
+                double fraction =
+                    (height - measuredHeights[i]) /
+                    (measuredHeights[i + 1] - measuredHeights[i]);
+
+                return measuredAngles[i] +
+                    fraction * (measuredAngles[i + 1] -
+                                measuredAngles[i]);
+            }
+        }
+
+        return MAX_LIFT_ANGLE;
+    };
+
+    // Convert stack level to the required release angle if supplied.
+    if (setsAlreadyScored >= 0) {
+        if (setsAlreadyScored > 3)
+            setsAlreadyScored = 3;
+
+        const double GOAL_LIP_HEIGHT = 3.25;
+        const double HEIGHT_PER_SET = 6.5;
+
+        double requiredHeight =
+            GOAL_LIP_HEIGHT + HEIGHT_PER_SET * setsAlreadyScored;
+
+        releaseHeight = heightToAngle(requiredHeight);
+    }
+
+    double releaseAngle = releaseHeight;
+
+    if (releaseAngle < 0)
+        releaseAngle = 0;
+    if (releaseAngle > MAX_LIFT_ANGLE)
+        releaseAngle = MAX_LIFT_ANGLE;
+
+    // Only calculate a peak for the +90-degree arm flip.
+    double peakAngle = releaseAngle;
+
+    if (armAngle >= 0) {
+        if (setsAlreadyScored >= 0) {
+            double releaseHeightInches =
+                3.25 + 6.5 * setsAlreadyScored;
+
+            double peakHeightInches =
+                releaseHeightInches + PEAK_ARC_INCHES;
+
+            if (peakHeightInches > MAX_LIFT_HEIGHT)
+                peakHeightInches = MAX_LIFT_HEIGHT;
+
+            peakAngle = heightToAngle(peakHeightInches);
+        } else if (liftPeakAngle >= 0) {
+            peakAngle = liftPeakAngle;
+        } else {
+            double currentHeight = 3.0;
+
+            for (int i = 0; i < DATA_POINTS - 1; i++) {
+                if (releaseAngle <= measuredAngles[i + 1]) {
+                    double fraction =
+                        (releaseAngle - measuredAngles[i]) /
+                        (measuredAngles[i + 1] - measuredAngles[i]);
+
+                    currentHeight =
+                        measuredHeights[i] +
+                        fraction * (measuredHeights[i + 1] -
+                                    measuredHeights[i]);
+                    break;
+                }
+            }
+
+            peakAngle = heightToAngle(
+                fmin(currentHeight + PEAK_ARC_INCHES,
+                     MAX_LIFT_HEIGHT));
+        }
+    }
+
+    if (peakAngle > MAX_LIFT_ANGLE)
+        peakAngle = MAX_LIFT_ANGLE;
+
+    chassis.follow(path, lookahead, timeoutMs, forwards);
+
+    chassis.waitUntil(armStartProgress);
+
+    // NEGATIVE arm target: command the release target directly.
+    // POSITIVE arm target: use the peak to create the overshoot.
+    if (moveLift) {
+        if (armAngle < 0)
+            setLiftTarget(releaseAngle);
+        else
+            setLiftTarget(peakAngle);
+    }
+
+    pros::Task armTask([armAngle]() {
+        moveArmAuton(armAngle);
+    });
+
+    if (startIntakeAtFive)
+        claw.move_voltage(12000);
+
+    // Only the positive arm flip uses the timed lowering checkpoint.
+    if (moveLift && armAngle >= 0 && lowerLiftProgress >= 0) {
+        chassis.waitUntil(lowerLiftProgress);
+        setLiftTarget(releaseAngle);
+    }
 
    chassis.waitUntilDone();
    armTask.join();
