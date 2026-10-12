@@ -10,8 +10,13 @@
 #include "pros/rotation.hpp"
 #include "pros/rtos.hpp"
 #include "pros/error.h"
+#include "pros/distance.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+
+
 
 
 // =====================================================================
@@ -24,13 +29,21 @@
 #define LIFT_TUNE_MODE 0
 
 
+
+
 // controller
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
+
+
 
 
 // motor groups
 pros::MotorGroup leftMotors({-9, -8, -1}, pros::MotorGearset::green);
 pros::MotorGroup rightMotors({19, 11, 17}, pros::MotorGearset::green);
+
+pros::Distance rightDistance(15);
+// Left distance sensor smart port.
+pros::Distance leftDistance(10);
 
 
 pros::Motor liftLeft(-2);
@@ -40,38 +53,58 @@ pros::Motor arm(16);
 pros::Imu imu(21);
 
 
+
+
 pros::Rotation verticalEnc(-18);
+
+
 
 
 // single lift rotation sensor (DR4B sides are mechanically linked, so one sensor tracks both)
 pros::Rotation liftRot(13);
 
 
+
+
 lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_2, 0);
+
+
 
 
 lemlib::Drivetrain drivetrain(&leftMotors, &rightMotors, 14,
                              lemlib::Omniwheel::OLD_325, 333, 8);
 
 
+
+
 lemlib::ControllerSettings linearController(7, 0, 18, 3, 1, 100, 3, 500, 10);
 lemlib::ControllerSettings angularController(1, 0, 0.05, 3, 1, 100, 3, 500, 0);
 
 
+
+
 lemlib::OdomSensors sensors(&vertical, nullptr, nullptr, nullptr, &imu);
+
+
 
 
 lemlib::ExpoDriveCurve throttleCurve(3, 10, 1.019);
 lemlib::ExpoDriveCurve steerCurve(3, 10, 1.019);
 
 
+
+
 lemlib::Chassis chassis(drivetrain, linearController, angularController, sensors,
                        &throttleCurve, &steerCurve);
+
+
 
 
 // =====================================================================
 // LIFT
 // =====================================================================
+
+
 
 
 // Hand rolled instead of lemlib::PID for one reason: the derivative is taken off
@@ -135,6 +168,8 @@ struct LiftPID {
 LiftPID liftPID(1.6, 0.0, 0.16, 10, 20);
 
 
+
+
 // How much of the downward command to actually use. Descending is gravity
 // assisted, so the full negative command is never needed and only makes the
 // arrival harder. 1.0 is the old behaviour, 0.7 is roughly 70 percent.
@@ -150,14 +185,20 @@ const double LIFT_AUTON_DOWN_MAX = 35.0;
 const double LIFT_AUTON_DOWN_SLEW = 8.0;
 
 
+
+
 double liftSlewRate = 25;   // output change allowed per 10 ms loop, tune this LAST
 double liftTarget = 0;     // current target, in lift degrees
 double liftLastOutput = 0;
 const double maxVoltage = 127;
 
 
+
+
 bool liftPIDEnabled = false;   // false = manual driver control, true = PID active
 bool liftAutonomousMode = false;
+
+
 
 
 // Tuning scratch value. Global so the screen task can print it, because only
@@ -165,9 +206,13 @@ bool liftAutonomousMode = false;
 double liftTestHold = 0;
 
 
+
+
 // How far initialize() has got. Shown on brain screen line 7 so a startup that
 // hangs is visible, instead of looking like the whole program is dead.
 const char* initStage = "boot";
+
+
 
 
 // Telemetry, written by liftTask and read by the screen task. PID and FF are
@@ -180,13 +225,19 @@ double liftFFNow = 0;       // feedforward part of the last output
 bool   liftSensorOK = true;
 
 
+
+
 // Travel limits, in lift degrees. Measured max height was 244.37, keep margin.
 const double LIFT_MIN = 0.0;
 const double LIFT_MAX = 220.0;
 
 
+
+
 // Ratio between the rotation sensor and the lift arm.
 const double LIFT_GEAR_RATIO = 0.71428571428;
+
+
 
 
 // ---------------------------------------------------------------------
@@ -225,6 +276,8 @@ double       kGHold[kGN]  = {4,  5,  6,   6,   7,   8,  12};
 const double LIFT_FF_MAX = 70;
 
 
+
+
 double liftFF(double angle) {
    double ff = kGHold[kGN - 1];
    if (angle <= kGAngle[0]) {
@@ -244,6 +297,8 @@ double liftFF(double angle) {
 }
 
 
+
+
 // Worst upward slope in the feedforward table, in command units per lift degree.
 // This has to stay below kP or there is no angle where PID + FF balances and the
 // lift runs away. Shown on brain screen line 7 next to kP.
@@ -255,6 +310,54 @@ double liftMaxFFSlope() {
    }
    return worst;
 }
+
+
+
+
+// ---------------------------------------------------------------------
+// HEIGHT TABLE
+//
+// Put the lift at each angle and measure the same point on the claw above the
+// tile with a tape, keeping the separate arm at the same angle each time.
+// Heights must come out strictly increasing; include the actual bottom height.
+// Add more rows if you want it tighter, just bump kHN to match.
+// ---------------------------------------------------------------------
+const int kHN = 6;
+const double kHAngle[kHN]  = {0, 50, 100, 150, 200, 220};
+double       kHInches[kHN] = {0, 0,  0,   0,   0,   0};   // <-- FILL THESE IN
+
+
+
+
+bool liftHeightCalibrationValid() {
+   for (int i = 0; i < kHN; i++) {
+       if (!std::isfinite(kHAngle[i]) || !std::isfinite(kHInches[i])) return false;
+       if (kHAngle[i] < LIFT_MIN || kHAngle[i] > LIFT_MAX) return false;
+       if (i > 0 && (kHAngle[i] <= kHAngle[i - 1] ||
+                     kHInches[i] <= kHInches[i - 1])) return false;
+   }
+   return true;
+}
+
+double inchesToLiftAngle(double inches) {
+   // Reject unmeasured heights and unreachable requests instead of driving to
+   // the top with the placeholder table or silently using a different height.
+   if (!liftHeightCalibrationValid() || !std::isfinite(inches) ||
+       inches < kHInches[0] || inches > kHInches[kHN - 1]) {
+       return std::numeric_limits<double>::quiet_NaN();
+   }
+   if (inches <= kHInches[0]) return kHAngle[0];
+   if (inches >= kHInches[kHN - 1]) return kHAngle[kHN - 1];
+   for (int i = 0; i < kHN - 1; i++) {
+       if (inches <= kHInches[i + 1]) {
+           double t = (inches - kHInches[i]) / (kHInches[i + 1] - kHInches[i]);
+           return kHAngle[i] + t * (kHAngle[i + 1] - kHAngle[i]);
+       }
+   }
+   return kHAngle[kHN - 1];
+}
+
+
 
 
 // ---------------------------------------------------------------------
@@ -286,6 +389,8 @@ double getLiftAngle() {
 }
 
 
+
+
 void setLiftTarget(double angleDeg) {
    if (angleDeg < LIFT_MIN) angleDeg = LIFT_MIN;
    if (angleDeg > LIFT_MAX) angleDeg = LIFT_MAX;
@@ -296,6 +401,38 @@ void setLiftTarget(double angleDeg) {
 }
 
 
+
+
+// Ask for a height above the tile. False leaves the existing target unchanged.
+// Enable PID first, just as for setLiftTarget().
+bool setLiftHeight(double inches) {
+   const double angle = inchesToLiftAngle(inches);
+   if (!std::isfinite(angle)) return false;
+   setLiftTarget(angle);
+   return true;
+}
+
+
+
+
+bool liftAtTarget(double tolerance = 2.0) {
+   return std::fabs(getLiftAngle() - liftTarget) <= tolerance;
+}
+
+
+
+
+void waitUntilLiftAt(double tolerance = 2.0, int timeoutMs = 2000) {
+   int elapsed = 0;
+   while (!liftAtTarget(tolerance) && elapsed < timeoutMs) {
+       pros::delay(10);
+       elapsed += 10;
+   }
+}
+
+
+
+
 // call this right before enabling PID so it does not slam to an old target
 void enableLiftPID() {
    double angle = getLiftAngle();
@@ -304,6 +441,8 @@ void enableLiftPID() {
    liftLastOutput = liftFF(angle);   // seed the slew so it does not sag
    liftPIDEnabled = true;
 }
+
+
 
 
 void liftTask() {
@@ -351,9 +490,13 @@ void liftTask() {
            if (output < -maxVoltage) output = -maxVoltage;
 
 
+
+
            if (output > liftLastOutput + liftSlewRate) output = liftLastOutput + liftSlewRate;
            if (output < liftLastOutput - liftSlewRate) output = liftLastOutput - liftSlewRate;
            liftLastOutput = output;
+
+
 
 
            liftLeft.move(output);
@@ -364,7 +507,11 @@ void liftTask() {
 }
 
 
+
+
 // =====================================================================
+
+
 
 
 void initialize() {
@@ -420,237 +567,392 @@ void initialize() {
 }
 
 
+
+
 void disabled() {}
 void competition_initialize() {}
 
 
 
-const double ARM_TARGET_TOLERANCE = 4.0;
 
-const int32_t ARM_MAX_VOLTAGE = 12000;
-const int32_t ARM_MEDIUM_VOLTAGE = 8000;
-const int32_t ARM_APPROACH_VOLTAGE = 4500;
-const int32_t ARM_FINAL_VOLTAGE = 2500;
-const int32_t ARM_HOLD_VOLTAGE = 3000;
-
- void moveArmAutonWithLiftTrigger(double targetAngle, double liftPeakAngle, int timeoutMs = 3000) {
-    // The arm has only two valid targets.
-    targetAngle = (targetAngle >= 0) ? 90.0 : -90.0;
-
-    const double TOLERANCE = 4.0;
-    bool liftTriggered = false;
-    int elapsed = 0;
-
-    while (elapsed < timeoutMs) {
-        double currentPos = arm.get_position();
-        double error = targetAngle - currentPos;
-
-        // Trigger the lift when the arm crosses 30 degrees.
-        if (!liftTriggered &&
-            ((targetAngle > 0 && currentPos >= 30.0) ||
-             (targetAngle < 0 && currentPos <= -30.0))) {
-            setLiftTarget(liftPeakAngle);
-            liftTriggered = true;
-        }
-
-        // Stop the movement loop when the arm reaches its target.
-        if (std::fabs(error) <= TOLERANCE) {
-            arm.move_voltage(targetAngle > 0 ? 3000 : -3000);
-            return;
-        }
-
-        // Full power throughout the entire arm movement.
-        arm.move_voltage(error > 0 ? 12000 : -12000);
-
-        pros::delay(10);
-        elapsed += 10;
-    }
-
-    // Maintain torque if the movement reaches its timeout.
-    arm.move_voltage(targetAngle > 0 ? 3000 : -3000);
-}
+ASSET(example_txt);
 
 
-void moveArmAuton(double targetAngle, int timeoutMs = 3000) {
-    targetAngle = (targetAngle >= 0) ? 90.0 : -90.0;
 
-    int elapsed = 0;
 
-    while (elapsed < timeoutMs) {
-        double currentPos = arm.get_position();
-        double error = targetAngle - currentPos;
-
-        if (std::fabs(error) <= ARM_TARGET_TOLERANCE) {
-            arm.move_voltage(targetAngle > 0
-                ? ARM_HOLD_VOLTAGE
-                : -ARM_HOLD_VOLTAGE);
-            return;
-        }
-
-        // Full voltage for the entire flip.
-        arm.move_voltage(error > 0
-            ? ARM_MAX_VOLTAGE
-            : -ARM_MAX_VOLTAGE);
-
-        pros::delay(10);
-        elapsed += 10;
-    }
-
-    arm.move_voltage(targetAngle > 0
-        ? ARM_HOLD_VOLTAGE
-        : -ARM_HOLD_VOLTAGE);
+// Old open loop lift helpers. These fight the PID task, so only use them with
+// liftPIDEnabled false.
+void lift_UP(float time) {
+   liftLeft.move_voltage(8000);
+   liftRight.move_voltage(8000);
+   pros::delay(time);
+   liftRight.brake();
+   liftLeft.brake();
 }
 
 
 
+
+void lift_DOWN(float time) {
+   liftLeft.move_voltage(-3000);
+   liftRight.move_voltage(-3000);
+   pros::delay(time);
+   liftRight.brake();
+   liftLeft.brake();
+}
+
+
+
+
+const double SLOW_ZONE_DELTA = 40.0;
+const double HOLD_ZONE_DELTA = 20.0;
+
+const int32_t MAX_SPEED = 12000;
+const int32_t APPROACH_SPEED = 2500;
+const int32_t GENTLE_HOLD = 3000;
+
+void moveArmAuton(double targetAngle, int timeoutMs = 2000) {
+    int elapsed = 0;
+
+    while (elapsed < timeoutMs) {
+        double current_pos = arm.get_position();
+        double error = targetAngle - current_pos;
+        double distance = std::abs(error);
+
+        // Reached the target: actively hold against gravity.
+        if (distance <= HOLD_ZONE_DELTA) {
+            arm.move_voltage(targetAngle >= 0 ? GENTLE_HOLD : -GENTLE_HOLD);
+            return;
+        }
+
+        // Move toward the target.
+        int32_t direction = (error > 0) ? 1 : -1;
+        int32_t voltage;
+
+        // Full power far away; reduce power when approaching.
+        if (distance > SLOW_ZONE_DELTA) {
+            voltage = MAX_SPEED;
+        } else {
+            voltage = APPROACH_SPEED;
+        }
+
+        arm.move_voltage(direction * voltage);
+
+        pros::delay(20);
+        elapsed += 20;
+    }
+
+    // If the timeout expires, keep applying holding voltage
+    // in the direction associated with the requested endpoint.
+    arm.move_voltage(targetAngle >= 0 ? GENTLE_HOLD : -GENTLE_HOLD);
+}
+
+
+
+// Flip to the other side while the lift rises, then settle at the requested
+// scoring angle when the arm passes upright (0 degrees).
+void scorePin(double finalLiftAngle, int timeoutMs = 2500) {
+   if (!std::isfinite(finalLiftAngle)) return;
+   finalLiftAngle = std::clamp(finalLiftAngle, LIFT_MIN, LIFT_MAX);
+
+   const double startAngle = arm.get_position();
+   if (!std::isfinite(startAngle)) return;
+   const int direction = startAngle < 0 ? 1 : -1;
+   const double armTarget = direction * 90.0;
+   const double raisedLiftAngle = std::min(finalLiftAngle + 30.0, LIFT_MAX);
+   bool liftRaised = false;
+   bool passedUpright = false;
+   bool armAtTarget = false;
+
+   int elapsed = 0;
+   for (; elapsed < timeoutMs; elapsed += 20) {
+       const double armAngle = arm.get_position();
+       if (!std::isfinite(armAngle)) break;
+
+       // Give the arm a 15-degree head start, then let the lift rise in parallel.
+       if (!liftRaised && direction * (armAngle - startAngle) >= 15.0 &&
+           direction * armAngle < 0) {
+           setLiftTarget(raisedLiftAngle);
+           liftRaised = true;
+       }
+       if (!passedUpright && direction * armAngle >= 0) {
+           setLiftTarget(finalLiftAngle);
+           passedUpright = true;
+       }
+
+       const double remaining = direction * (armTarget - armAngle);
+       if (remaining <= HOLD_ZONE_DELTA) {
+           arm.move_voltage(direction * GENTLE_HOLD);
+           armAtTarget = true;
+           break;
+       }
+       const int32_t voltage = remaining <= SLOW_ZONE_DELTA
+                                   ? APPROACH_SPEED : MAX_SPEED;
+       arm.move_voltage(direction * voltage);
+       pros::delay(20);
+   }
+
+   // Keep the requested angle as the final PID target, even after a timeout.
+   setLiftTarget(finalLiftAngle);
+   if (!armAtTarget) arm.move_voltage(0);
+   if (armAtTarget) {
+       waitUntilLiftAt(3.0, timeoutMs - elapsed);
+   }
+}
+
+
+
+
+// =====================================================================
+// DISTANCE SENSOR ODOMETRY RESET
+// =====================================================================
+//
+// Corrects ONE axis of the odometry pose by measuring a wall whose field
+// coordinate you already know, using the right hand sensor on port 15.
+//
+// Three things have to be accounted for or the "correction" leaves odom worse
+// than not touching it:
+//
+//   1. Robot heading. The sensor turns with the robot, so the beam direction in
+//      FIELD coordinates is the robot heading plus the mounting angle.
+//   2. Mounting angle. Right facing is 90 degrees clockwise of robot forward.
+//   3. Mounting offset. The sensor does not sit at the tracking center, so its
+//      field position is the robot pose plus that offset rotated into the field
+//      frame. Skipping this bakes an error into every reset, and because the
+//      offset rotates with the robot the error changes sign as it turns, which
+//      is nastier than a fixed bias.
+//
+// It also handles the beam striking the wall at an angle, which is the part that
+// usually gets missed. A sensor 10 inches from a wall reads 10 only when it is
+// square to it; at 30 degrees off it reads 11.5. Projecting the beam vector onto
+// the wall normal takes care of that on its own.
+//
+// ASSUMPTION worth being explicit about: this trusts the heading and corrects
+// only position. One distance sensor cannot tell a heading error apart from a
+// position error, so if the IMU has drifted this will confidently write in a
+// wrong answer. Guard rails below reject the readings most likely to be junk,
+// but they cannot catch a bad heading.
+//
+// Usage, e.g. squaring up on the right wall at x = 72 before a scoring run:
+//     DistanceFix fix = resetOdomFromWall(Wall::PlusX, 72.0);
+//     if (!fix.ok) { /* fix.reason says why, odom left untouched */ }
+
+
+// ---- MEASURE THESE ON THE ROBOT, they are guesses ----
+// Offsets from the TRACKING CENTER, the point odom actually reports, in inches.
+const double DIST_OFFSET_FORWARD = 0.0;   // + toward the front of the robot
+const double DIST_OFFSET_RIGHT   = 6.5;   // + toward the right of the robot
+// Mounting angle relative to robot forward, degrees clockwise.
+// 90 means pointing straight out the right side.
+const double DIST_SENSOR_ANGLE   = 90.0;
+
+// TODO: Measure the left sensor offsets from the tracking center, in inches.
+const double LEFT_DIST_OFFSET_FORWARD = 0.0;
+const double LEFT_DIST_OFFSET_RIGHT = -6.5; // negative means left; provisional
+const double LEFT_DIST_SENSOR_ANGLE = -90.0;
+// TODO: Set the negative-Y wall coordinate in YOUR odometry frame.
+// NAN disables this reset until configured; -72 only fits a field-centered origin.
+const double LOADER2_WALL_Y = NAN;
+
+// Sensor mounting geometry relative to the tracking center.
+struct DistanceMount {
+    double forward;
+    double right;
+    double angle;
+};
+const DistanceMount RIGHT_DISTANCE_MOUNT{
+    DIST_OFFSET_FORWARD, DIST_OFFSET_RIGHT, DIST_SENSOR_ANGLE};
+const DistanceMount LEFT_DISTANCE_MOUNT{
+    LEFT_DIST_OFFSET_FORWARD, LEFT_DIST_OFFSET_RIGHT, LEFT_DIST_SENSOR_ANGLE};
+
+// Which wall face the beam is pointed at. Names are the direction of the wall's
+// outward axis, so PlusX is the wall you reach by driving toward +x.
+enum class Wall { PlusX, MinusX, PlusY, MinusY };
+
+struct DistanceFix {
+   bool ok;
+   double measured;      // where the sensor put the wall, in field coordinates
+   double correction;    // how far the pose was moved, 0 when rejected
+   double spread;        // inches between the closest and furthest sample
+   const char* reason;   // why it was rejected
+};
+
+
+// Anything slower than this counts as stopped, in RPM.
+const double DIST_STILL_RPM = 5.0;
+
+// This reset is only meant to run with the robot stationary. If the drivetrain
+// is still turning, the samples are smeared across a moving vantage point and
+// the pose is shifting out from under the correction as it is applied.
+// Checks the first motor of each side, which is enough to catch a chassis that
+// is still coasting or a motion that was never waited on.
+static bool driveIsStopped() {
+   return std::fabs(leftMotors.get_actual_velocity()) < DIST_STILL_RPM &&
+          std::fabs(rightMotors.get_actual_velocity()) < DIST_STILL_RPM;
+}
+
+
+// Median plus spread. Because the robot is stationary the samples SHOULD agree
+// closely, so how much they disagree is real information: a wide spread means
+// the beam is catching an edge, a gap, or something reflective. A median on its
+// own would quietly hide exactly that, which is why the spread comes back too.
+static std::int32_t distanceMedianMM(pros::Distance& sensor, int samples, std::int32_t& spreadMM) {
+   std::int32_t v[15];
+   if (samples > 15) samples = 15;
+   if (samples < 1) samples = 1;
+   for (int i = 0; i < samples; i++) {
+       v[i] = sensor.get_distance();
+       if (v[i] == PROS_ERR || v[i] <= 0 || v[i] >= 9999) {
+           spreadMM = 0;
+           return v[i];
+       }
+       if (i + 1 < samples) pros::delay(10);
+   }
+   std::sort(v, v + samples);
+   spreadMM = v[samples - 1] - v[0];
+   return v[samples / 2];
+}
+
+
+// Samples default to 9 rather than a handful, because standing still costs
+// nothing but 80 ms and more samples make both the median and the spread mean
+// something.
+static DistanceFix resetOdomFromSensor(pros::Distance& sensor,
+                              double offsetForward, double offsetRight,
+                              double sensorAngle, Wall wall, double wallCoord,
+                              double maxCorrection = 6.0,
+                              int minConfidence = 40,
+                              int samples = 9,
+                              double maxSpreadIn = 0.6) {
+   DistanceFix r{false, 0.0, 0.0, 0.0, "ok"};
+
+   if (!driveIsStopped()) {
+       r.reason = "robot still moving, call waitUntilDone first";
+       return r;
+   }
+
+   std::int32_t spreadMM = 0;
+   std::int32_t mm = distanceMedianMM(sensor, samples, spreadMM);
+   r.spread = spreadMM / 25.4;
+
+   if (mm == PROS_ERR || mm <= 0) { r.reason = "sensor error, check distance sensor port"; return r; }
+   if (mm >= 9999) { r.reason = "nothing in range"; return r; }
+   // Confidence is only meaningful past 200 mm, per the PROS docs.
+   const auto confidence = sensor.get_confidence();
+   if (mm > 200 && (confidence == PROS_ERR || confidence < minConfidence)) {
+       r.reason = "low confidence"; return r;
+   }
+   // Standing still, a flat wall reads within a few mm. Disagreement past this
+   // means the beam is not on a flat wall, so the median is not worth trusting.
+   if (r.spread > maxSpreadIn) {
+       r.reason = "samples disagree, beam not on a flat wall";
+       return r;
+   }
+
+   const double DEG = 3.14159265358979323846 / 180.0;
+   double d = mm / 25.4;   // the sensor reports millimetres, odom is in inches
+
+   lemlib::Pose p = chassis.getPose();
+
+   // LemLib heading is a compass bearing: 0 is +y, clockwise positive.
+   // So forward is (sin, cos) and right is that turned 90 clockwise.
+   double th = p.theta * DEG;
+   double fx = std::sin(th),  fy = std::cos(th);
+   double rx = std::cos(th),  ry = -std::sin(th);
+
+   // (1) and (3): where the sensor actually is, in field coordinates
+   double sx = p.x + fx * offsetForward + rx * offsetRight;
+   double sy = p.y + fy * offsetForward + ry * offsetRight;
+
+   // (2): where the beam is pointed, in field coordinates
+   double bth = (p.theta + sensorAngle) * DEG;
+   double bx = std::sin(bth), by = std::cos(bth);
+
+   // where the beam says it struck
+   double hx = sx + bx * d;
+   double hy = sy + by * d;
+
+   bool xAxis = (wall == Wall::PlusX || wall == Wall::MinusX);
+   double along = xAxis ? bx : by;   // beam component along the wall normal
+   double hit = xAxis ? hx : hy;
+
+   // A beam nearly parallel to the wall carries almost no information about that
+   // axis, and a small heading error there turns into a huge position error. It
+   // also has to be pointed AT the named wall, not away from it. 0.5 is 60
+   // degrees off perpendicular, which is about as oblique as is still useful.
+   double towardWall = (wall == Wall::PlusX || wall == Wall::PlusY) ? along : -along;
+   if (towardWall < 0.5) { r.reason = "beam too oblique or facing away"; return r; }
+
+   double correction = wallCoord - hit;
+
+   // A big correction almost always means the beam found a robot or a game
+   // element rather than the wall. Refuse it rather than teleport the pose.
+   if (std::fabs(correction) > maxCorrection) {
+       r.measured = hit;
+       r.reason = "correction too large, probably not the wall";
+       return r;
+   }
+
+   if (xAxis) chassis.setPose(p.x + correction, p.y, p.theta);
+   else chassis.setPose(p.x, p.y + correction, p.theta);
+
+   r.ok = true;
+   r.measured = hit;
+   r.correction = correction;
+   return r;
+}
+// Explicit sensor and mounting geometry for resets using either sensor.
+DistanceFix resetOdomFromWall(pros::Distance& sensor, const DistanceMount& mount,
+                              Wall wall, double wallCoord,
+                              double maxCorrection = 6.0,
+                              int minConfidence = 40,
+                              int samples = 9,
+                              double maxSpreadIn = 0.6) {
+    return resetOdomFromSensor(sensor, mount.forward, mount.right, mount.angle,
+                              wall, wallCoord, maxCorrection, minConfidence,
+                              samples, maxSpreadIn);
+}
+
+// Existing right-side API and defaults are preserved.
+DistanceFix resetOdomFromWall(Wall wall, double wallCoord,
+                              double maxCorrection = 6.0,
+                              int minConfidence = 40,
+                              int samples = 9,
+                              double maxSpreadIn = 0.6) {
+    return resetOdomFromSensor(rightDistance, DIST_OFFSET_FORWARD,
+                              DIST_OFFSET_RIGHT, DIST_SENSOR_ANGLE, wall,
+                              wallCoord, maxCorrection, minConfidence,
+                              samples, maxSpreadIn);
+}
+
+// Call while stopped, with the selected sensor facing the +X wall.
+// Always pass the matching mount so the correct offset and beam angle are used.
+DistanceFix resetAtGoal1(pros::Distance& sensor, const DistanceMount& mount) {
+    return resetOdomFromWall(sensor, mount, Wall::PlusX, 18, 4.0);
+}
+
+// Same wall, baseline, and correction limit as goal 1.
+DistanceFix resetAtGoal2(pros::Distance& sensor, const DistanceMount& mount) {
+    return resetOdomFromWall(sensor, mount, Wall::PlusX, 18, 4.0);
+}
 
 // Start the arm at 2 inches without blocking the 5-inch lift/intake trigger.
+void followPathWithMechanisms(const asset& path, float lookahead, int timeoutMs,
+                              bool forwards, double armAngle, bool moveLift,
+                              double liftAngle, bool startIntakeAtFive) {
+   chassis.follow(path, lookahead, timeoutMs, forwards);
+   chassis.waitUntil(2);
+   pros::Task armTask([armAngle]() { moveArmAuton(armAngle); });
 
+   if (moveLift || startIntakeAtFive) {
+      chassis.waitUntil(5);
+      if (moveLift) setLiftTarget(liftAngle);
+      if (startIntakeAtFive) claw.move_voltage(12000);
+   }
 
-void followPathWithMechanisms(const asset& path,
-    float lookahead,
-    int timeoutMs,
-    bool forwards,
-    double armAngle,
-    bool moveLift,
-    double releaseHeight,
-    bool startIntakeAtFive,
-    double armStartProgress = 2,
-    double lowerLiftProgress = -1,
-    double liftPeakAngle = -1,
-    int setsAlreadyScored = -1) {
-
-    const double MAX_LIFT_ANGLE = 250.0;
-    const double MAX_LIFT_HEIGHT = 29.5;
-    const double PEAK_ARC_INCHES = 2.0;
-
-    const int DATA_POINTS = 10;
-    const double measuredAngles[DATA_POINTS] = {
-        0, 30, 60, 90, 120, 150, 180, 210, 240, 250
-    };
-    const double measuredHeights[DATA_POINTS] = {
-        3, 4.5, 7.5, 10.5, 14, 17.5, 21, 27, 28.5, 29.5
-    };
-
-    auto heightToAngle = [&](double height) -> double {
-        if (height <= measuredHeights[0])
-            return measuredAngles[0];
-
-        if (height >= measuredHeights[DATA_POINTS - 1])
-            return measuredAngles[DATA_POINTS - 1];
-
-        for (int i = 0; i < DATA_POINTS - 1; i++) {
-            if (height <= measuredHeights[i + 1]) {
-                double fraction =
-                    (height - measuredHeights[i]) /
-                    (measuredHeights[i + 1] - measuredHeights[i]);
-
-                return measuredAngles[i] +
-                    fraction * (measuredAngles[i + 1] -
-                                measuredAngles[i]);
-            }
-        }
-
-        return MAX_LIFT_ANGLE;
-    };
-
-    // Convert stack level to the required release angle if supplied.
-    if (setsAlreadyScored >= 0) {
-        if (setsAlreadyScored > 3)
-            setsAlreadyScored = 3;
-
-        const double GOAL_LIP_HEIGHT = 3.25;
-        const double HEIGHT_PER_SET = 6.5;
-
-        double requiredHeight =
-            GOAL_LIP_HEIGHT + HEIGHT_PER_SET * setsAlreadyScored;
-
-        releaseHeight = heightToAngle(requiredHeight);
-    }
-
-    double releaseAngle = releaseHeight;
-
-    if (releaseAngle < 0)
-        releaseAngle = 0;
-    if (releaseAngle > MAX_LIFT_ANGLE)
-        releaseAngle = MAX_LIFT_ANGLE;
-
-    // Only calculate a peak for the +90-degree arm flip.
-    double peakAngle = releaseAngle;
-
-    if (armAngle >= 0) {
-        if (setsAlreadyScored >= 0) {
-            double releaseHeightInches =
-                3.25 + 6.5 * setsAlreadyScored;
-
-            double peakHeightInches =
-                releaseHeightInches + PEAK_ARC_INCHES;
-
-            if (peakHeightInches > MAX_LIFT_HEIGHT)
-                peakHeightInches = MAX_LIFT_HEIGHT;
-
-            peakAngle = heightToAngle(peakHeightInches);
-        } else if (liftPeakAngle >= 0) {
-            peakAngle = liftPeakAngle;
-        } else {
-            double currentHeight = 3.0;
-
-            for (int i = 0; i < DATA_POINTS - 1; i++) {
-                if (releaseAngle <= measuredAngles[i + 1]) {
-                    double fraction =
-                        (releaseAngle - measuredAngles[i]) /
-                        (measuredAngles[i + 1] - measuredAngles[i]);
-
-                    currentHeight =
-                        measuredHeights[i] +
-                        fraction * (measuredHeights[i + 1] -
-                                    measuredHeights[i]);
-                    break;
-                }
-            }
-
-            peakAngle = heightToAngle(
-                fmin(currentHeight + PEAK_ARC_INCHES,
-                     MAX_LIFT_HEIGHT));
-        }
-    }
-
-    if (peakAngle > MAX_LIFT_ANGLE)
-        peakAngle = MAX_LIFT_ANGLE;
-
-    chassis.follow(path, lookahead, timeoutMs, forwards);
-
-    chassis.waitUntil(armStartProgress);
-
-    // NEGATIVE arm target: command the release target directly.
-    // POSITIVE arm target: use the peak to create the overshoot.
-    if (moveLift) {
-        if (armAngle < 0)
-            setLiftTarget(releaseAngle);
-        else
-            setLiftTarget(peakAngle);
-    }
-
-    pros::Task armTask([armAngle]() {
-        moveArmAuton(armAngle);
-    });
-
-    if (startIntakeAtFive)
-        claw.move_voltage(12000);
-
-    // Only the positive arm flip uses the timed lowering checkpoint.
-    if (moveLift && armAngle >= 0 && lowerLiftProgress >= 0) {
-        chassis.waitUntil(lowerLiftProgress);
-        setLiftTarget(releaseAngle);
-    }
-
-    chassis.waitUntilDone();
-    armTask.join();
+   chassis.waitUntilDone();
+   armTask.join();
 }
-
-
-
-
 
 ASSET(loader_txt);
 ASSET(goal_txt);
@@ -665,175 +967,170 @@ void autonomous() {
    liftAutonomousMode = true;
    enableLiftPID();
 
-   //chassis.setPose(0, 0, 180);
+   chassis.setPose(0, 0, 180);
    
-   
-//    claw.move_voltage(12000);
+   claw.move_voltage(12000);
 
-//    // Toggle roller while the claw runs.
-//    chassis.moveToPoint(0, 8, 500, {.forwards=false, .minSpeed = 33});
-//    moveArmAuton(90);
-//    chassis.turnToHeading(0, 750, {.maxSpeed=60});
-//    chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
-//    pros::delay(500);
-//    chassis.moveToPoint(0, 6, 500, {.minSpeed = 33});
-//    pros::delay(500);
-//    chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
-//    pros::delay(500);
-
-//    // Score the preload, then lower the lift before releasing it.
-//    setLiftTarget(100);
-//    chassis.moveToPose(-24, 16, -90, 1500, {.lead = 0.4, .maxSpeed = 70, .minSpeed = 30});
-//    moveArmAuton(90);
-//    chassis.waitUntilDone();
-//    setLiftTarget(0);
-//    claw.move_voltage(-12000);
-//    pros::delay(300);
-//    moveArmAuton(-90);
-//    claw.brake();
-
-
-//       chassis.moveToPose(25, 45, -150, 3000, {.forwards=false, .lead=0});
-      
-//     claw.move_voltage(12000);
-//     chassis.waitUntilDone();
-//     chassis.moveToPose(38, 41, 90, 2000, {.maxSpeed=55});
-//    moveArmAuton(90);
-//    pros::delay(100);
-//    setLiftTarget(60);
-//    chassis.waitUntilDone();
-//    setLiftTarget(0);
-//    pros::delay(200);
-//    claw.move_voltage(-12000);
-//    // Re-anchor at the first-goal scoring pose used to tune the U-turn.
-//    chassis.setPose(-23.614, -39.576, 180);
-//    // Sweep around to the second toggle in one backward motion.
-//    chassis.follow(uturn_txt, 12, 6000, false);
-//    chassis.waitUntilDone();
-   
-
-//    //Dont change above. Everything above works. DONT CHANGE
-//    //Dont FUCKING CHANGE IT
-//    //Dont FUCKING CHANGE IT
-//    //Dont FUCKING CHANGE IT
-//    //Dont FUCKING CHANGE IT
-
-   
-//    // Contact with the bottom wall fixes Y, but does not tell us X. Keep the
-//    // measured X; at this handoff the robot's front points right.
-//    claw.move_voltage(12000);
-//    moveArmAuton(-90);
-//    chassis.setPose(0.601, -65.642, 0);
-//    chassis.follow(yellow_txt, 10, 10000, true);
-//    chassis.waitUntilDone();
-//    chassis.setPose(10.2, -53.831, 90);
-//    followPathWithMechanisms(green_txt, 10, 6500, false, -90, false, 0, false);
-   
-   
-
-
-//    //Part above is waiting for wall rider
-
-
-//    // Previous scoring sequence, to be adapted after the new pickup path is tested.
-//    chassis.turnToHeading(0, 500, {.maxSpeed=80});
-//    chassis.moveToPose(52, 33, 0, 1500, {.lead=0, .maxSpeed=80});
-//    moveArmAuton(90);
-//    pros::delay(100);
-//    setLiftTarget(90);
-//    chassis.moveToPose(52, 33, 0, 1500, {.maxSpeed=80});
-//    chassis.waitUntilDone();
-//    setLiftTarget(60);
-//    claw.move_voltage(-12000);
-
-//    //Above is good enough dont mess
-
-//    // Loader pin #3: use the scoring pose as a local origin for the pickup path.
-   chassis.setPose(0,0,0);
-   setLiftTarget(90);
+   // Toggle roller while the claw runs.
+   chassis.moveToPoint(0, 8, 500, {.forwards=false, .minSpeed = 33});
    moveArmAuton(90);
+   chassis.turnToHeading(0, 750, {.maxSpeed=60});
+   chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
+   pros::delay(500);
+   chassis.moveToPoint(0, 6, 500, {.minSpeed = 33});
+   pros::delay(500);
+   chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
+   pros::delay(500);
+
+   // Score the preload, then lower the lift before releasing it.
+   setLiftTarget(100);
+   chassis.moveToPose(-24, 16, -90, 1500, {.lead = 0.4, .maxSpeed = 70, .minSpeed = 30});
+   moveArmAuton(90);
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   claw.move_voltage(-12000);
+   pros::delay(300);
+   moveArmAuton(-90);
+   claw.brake();
+
+
+      chassis.moveToPose(25, 45, -150, 3000, {.forwards=false, .lead=0});
+      
+    claw.move_voltage(12000);
+    chassis.waitUntilDone();
+    chassis.moveToPose(38, 41, 90, 2000, {.maxSpeed=55});
+   moveArmAuton(90);
+   pros::delay(100);
+   setLiftTarget(60);
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   pros::delay(200);
+   claw.move_voltage(-12000);
+   // Re-anchor at the first-goal scoring pose used to tune the U-turn.
+   chassis.setPose(-23.614, -39.576, 180);
+   // Sweep around to the second toggle in one backward motion.
+   chassis.follow(uturn_txt, 12, 6000, false);
+   chassis.waitUntilDone();
+   
+
+   //Dont change above. Everything above works. DONT CHANGE
+   //Dont FUCKING CHANGE IT
+   //Dont FUCKING CHANGE IT
+   //Dont FUCKING CHANGE IT
+   //Dont FUCKING CHANGE IT
+
+   
+   // Contact with the bottom wall fixes Y, but does not tell us X. Keep the
+   // measured X; at this handoff the robot's front points right.
+   claw.move_voltage(12000);
+   moveArmAuton(-90);
+   chassis.setPose(0.601, -65.642, 0);
+   chassis.follow(yellow_txt, 10, 10000, true);
+   chassis.waitUntilDone();
+   chassis.setPose(10.2, -53.831, 90);
+   followPathWithMechanisms(green_txt, 10, 6500, false, -90, false, 0, false);
+   
+   
+
+
+   //Part above is waiting for wall rider
+
+
+   // Previous scoring sequence, to be adapted after the new pickup path is tested.
+   chassis.turnToHeading(0, 500, {.maxSpeed=80});
+   chassis.moveToPose(52, 33, 0, 1500, {.lead=0, .maxSpeed=80});
+   moveArmAuton(90);
+   pros::delay(100);
+   setLiftTarget(90);
+   chassis.moveToPose(52, 33, 0, 1500, {.maxSpeed=80});
+   chassis.waitUntilDone();
+   setLiftTarget(60);
+   claw.move_voltage(-12000);
+
+   //Above is good enough dont mess
+
+   // Loader pin #3: use the scoring pose as a local origin for the pickup path.
+   chassis.setPose(0,0,0);
+    followPathWithMechanisms(loader_txt, 8, 3000, false, -90, true, 0, true);
    pros::delay(1000);
-    followPathWithMechanisms(loader_txt, 8, 3000, false, -90, true, 0, true, 0);
-   pros::delay(1000);
-    followPathWithMechanisms(
-     goal_txt, 8, 3000, true,
-     90, true, 60, false,
-     14, 26, 120, 0
- );
+   followPathWithMechanisms(goal_txt, 8, 3000, true, 90, true, 120, false);
    claw.move_voltage(-12000);
    pros::delay(1000);
    claw.move_voltage(0);
 
-//    // Loader pin #4: repeat the lane entry and raise to 150 on the way out.
-//    followPathWithMechanisms(loader_txt, 8, 3000, false, -90, true, 0, true);
-//    pros::delay(1000);
-//    followPathWithMechanisms(goal_txt, 8, 3000, true, 90, true, 120, false);
-//    claw.move_voltage(-12000);
-//    pros::delay(1000);
-//    claw.move_voltage(0);
+   // Loader pin #4: repeat the lane entry and raise to 150 on the way out.
+   followPathWithMechanisms(loader_txt, 8, 3000, false, -90, true, 0, true);
+   pros::delay(1000);
+   followPathWithMechanisms(goal_txt, 8, 3000, true, 90, true, 120, false);
+   claw.move_voltage(-12000);
+   pros::delay(1000);
+   claw.move_voltage(0);
 
-//    // Loader pin #5: the pictured goal is the origin of this new path pair.
-//    followPathWithMechanisms(loader_txt, 8, 6000, false, -90, true, 0, true);
-//    chassis.setPose(-13.5, -37.5, 90);
-//    pros::delay(1000);
-//    followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
-//    setLiftTarget(0);
-//    claw.move_voltage(-12000);
-//    pros::delay(500);
-//    claw.brake();
+   // Loader pin #5: the pictured goal is the origin of this new path pair.
+   followPathWithMechanisms(loader_txt, 8, 6000, false, -90, true, 0, true);
+   chassis.setPose(-13.5, -37.5, 90);
+   pros::delay(1000);
+   followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
+   setLiftTarget(0);
+   claw.move_voltage(-12000);
+   pros::delay(500);
+   claw.brake();
 
 
-//    //Loader 6
-//    chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-//    chassis.waitUntilDone();
-//    chassis.setPose(0,0,0);
-//    followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
-//    pros::delay(1000);
-//    // The robot is stationary at the loader; anchor the return to goal2's start.
-//    chassis.setPose(-14.5, -37, 90);
-//    followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
-//    setLiftTarget(0);
-//    claw.move_voltage(-12000);
-//    pros::delay(500);
-//    claw.brake();
+   //Loader 6
+   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
+   chassis.waitUntilDone();
+   chassis.setPose(0,0,0);
+   followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
+   pros::delay(1000);
+   // The robot is stationary at the loader; anchor the return to goal2's start.
+   chassis.setPose(-14.5, -37, 90);
+   followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
+   setLiftTarget(0);
+   claw.move_voltage(-12000);
+   pros::delay(500);
+   claw.brake();
 
-//    //Loader 7
-//    chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-//    chassis.waitUntilDone();
-//    chassis.setPose(0,0,0);
-//    followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
-//    pros::delay(1000);
-//    chassis.setPose(-14.5, -37, 90);
-//    followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
-//    setLiftTarget(0);
-//    claw.move_voltage(-12000);
-//    pros::delay(500);
-//    claw.brake();
+   //Loader 7
+   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
+   chassis.waitUntilDone();
+   chassis.setPose(0,0,0);
+   followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
+   pros::delay(1000);
+   chassis.setPose(-14.5, -37, 90);
+   followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
+   setLiftTarget(0);
+   claw.move_voltage(-12000);
+   pros::delay(500);
+   claw.brake();
 
-//    //Loader 8
-//    chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-//    chassis.waitUntilDone();
-//    chassis.setPose(0,0,0);
-//    followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
-//    pros::delay(1000);
-//    chassis.setPose(-14.5, -37, 90);
-//    followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
-//    setLiftTarget(0);
-//    claw.move_voltage(-12000);
-//    pros::delay(500);
-//    claw.brake();
+   //Loader 8
+   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
+   chassis.waitUntilDone();
+   chassis.setPose(0,0,0);
+   followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
+   pros::delay(1000);
+   chassis.setPose(-14.5, -37, 90);
+   followPathWithMechanisms(goal2_txt, 8, 6000, true, 90, true, 60, false);
+   setLiftTarget(0);
+   claw.move_voltage(-12000);
+   pros::delay(500);
+   claw.brake();
 
-//    // Middle Pin
-//    chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-//    chassis.waitUntilDone();
-//    chassis.setPose(0,0,0);
-//    followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
-//    chassis.setPose(-13.5, -37.5, 90);
-//    pros::delay(1000);
-//    chassis.moveToPose(48, 24, 45, 6000);
+   // Middle Pin
+   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
+   chassis.waitUntilDone();
+   chassis.setPose(0,0,0);
+   followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
+   chassis.setPose(-13.5, -37.5, 90);
+   pros::delay(1000);
+   chassis.moveToPose(48, 24, 45, 6000);
     
     
 }
+
+
+
 
 
 // Turns the LIFT_TUNE_MODE number into text so it can be shown on the screen.
@@ -855,6 +1152,8 @@ void opcontrol() {
    arm.tare_position();
 
 
+
+
 #if LIFT_TUNE_MODE == 1
    // -----------------------------------------------------------------
    // MODE 1, gravity measurement.
@@ -872,6 +1171,8 @@ void opcontrol() {
    liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
 
 
+
+
    liftTestHold = 0;
    long ticks = 0;
 
@@ -887,6 +1188,8 @@ void opcontrol() {
    pros::delay(60);
 
 
+
+
    while (true) {
        ticks++;
 
@@ -896,6 +1199,8 @@ void opcontrol() {
 
        chassis.arcade(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
                       controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X));
+
+
 
 
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
@@ -910,6 +1215,8 @@ void opcontrol() {
        }
 
 
+
+
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) {
            claw.move_voltage(12000);
        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
@@ -919,6 +1226,8 @@ void opcontrol() {
        }
 
 
+
+
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
            arm.move_voltage(9000);
        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2)) {
@@ -926,6 +1235,8 @@ void opcontrol() {
        } else {
            arm.move_voltage(0);
        }
+
+
 
 
        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_X)) liftTestHold += 1;
@@ -942,6 +1253,8 @@ void opcontrol() {
        }
 
 
+
+
        // Integers only, and no faster than the controller's 50 ms write limit.
        // The M1 prefix is there so you can always tell which build is running
        // on the brain. Trailing spaces wipe the previous, longer line.
@@ -953,8 +1266,12 @@ void opcontrol() {
        }
 
 
+
+
        pros::delay(10);
    }
+
+
 
 
 #elif LIFT_TUNE_MODE == 2
@@ -1027,6 +1344,8 @@ void opcontrol() {
    }
 
 
+
+
 #else
    // -----------------------------------------------------------------
    // MODE 0, normal driver control.
@@ -1034,11 +1353,15 @@ void opcontrol() {
    liftPIDEnabled = false;
 
 
+
+
    const double SLOW_ZONE_ANGLE = 65.0;
    const double HOLD_ZONE_ANGLE = 85.0;
    const int32_t MAX_SPEED = 9000;
    const int32_t APPROACH_SPEED = 2500;
    const int32_t GENTLE_HOLD = 3000;
+
+
 
 
    while (true) {
@@ -1054,6 +1377,8 @@ void opcontrol() {
        pros::delay(10);
 
 
+
+
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
            liftLeft.move_voltage(9000);
            liftRight.move_voltage(9000);
@@ -1066,6 +1391,8 @@ void opcontrol() {
        }
 
 
+
+
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) {
            claw.move_voltage(12000);
        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
@@ -1073,6 +1400,8 @@ void opcontrol() {
        } else {
            claw.brake();
        }
+
+
 
 
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
