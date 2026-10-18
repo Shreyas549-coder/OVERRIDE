@@ -1,6 +1,7 @@
 #include "main.h"
 #include "fmt/core.h"
 #include "lemlib/api.hpp" // IWYU pragma: keep
+#include "lemlib/asset.hpp"
 #include "lemlib/chassis/trackingWheel.hpp"
 #include "pros/abstract_motor.hpp"
 #include "pros/device.hpp"
@@ -659,6 +660,11 @@ ASSET(goal2_txt);
 ASSET(uturn_txt);
 ASSET(yellow_txt);
 ASSET(green_txt);
+ASSET(pathjerryloader_txt);
+ASSET(pathjerrygoal_txt);
+ASSET(pathjerrygoal2_txt);
+ASSET(pathjerryloader2_txt);
+ASSET(testgoal_txt);
 
 void autonomous() {
 
@@ -705,11 +711,11 @@ void autonomous() {
 //    setLiftTarget(0);
 //    pros::delay(200);
 //    claw.move_voltage(-12000);
-   // Re-anchor at the first-goal scoring pose used to tune the U-turn.
-    chassis.setPose(-23.614, -37.576, 180);
-//    // Sweep around to the second toggle in one backward motion.
-   chassis.follow(uturn_txt, 12, 3000, false);
-   chassis.waitUntilDone();
+//    //Re-anchor at the first-goal scoring pose used to tune the U-turn.
+//     chassis.setPose(-23.614, -37.576, 180);
+// //    // Sweep around to the second toggle in one backward motion.
+//    chassis.follow(uturn_txt, 12, 3000, false);
+//    chassis.waitUntilDone();
    
 
 //    Dont change above. Everything above works. DONT CHANGE
@@ -722,12 +728,12 @@ void autonomous() {
 //    Contact with the bottom wall fixes Y, but does not tell us X. Keep the
 //    measured X; at this handoff the robot's front points right.
    claw.move_voltage(12000);
-   moveArmAuton(-90);
    chassis.setPose(-0.349, -64.71, 0);
    chassis.follow(yellow_txt, 8, 5000, true);
+   moveArmAuton(-90);
    chassis.waitUntilDone();
-   chassis.setPose(7.2, -57.471, 180);
-   followPathWithMechanisms(green_txt, 10, 6500, false, -90, false, 0, false);
+   chassis.setPose(7.2, -57.471, 90);
+   chassis.follow(green_txt, 15, 6500, false);
    chassis.waitUntilDone();
    
 
@@ -736,27 +742,22 @@ void autonomous() {
 
 
    // Previous scoring sequence, to be adapted after the new pickup path is tested.
-   chassis.turnToHeading(0, 500, {.maxSpeed=80});
-   chassis.moveToPose(52, 33, 0, 1500, {.lead=0, .maxSpeed=80});
-   moveArmAuton(90);
-   pros::delay(100);
+   chassis.setPose(0, 0, 90);
+   chassis.moveToPose(4, 18, 0, 1500, {.lead=0, .maxSpeed=80});
    setLiftTarget(90);
-   chassis.moveToPose(52, 33, 0, 1500, {.maxSpeed=80});
    chassis.waitUntilDone();
-   setLiftTarget(60);
-   claw.move_voltage(-12000);
+   moveArmAuton(90);
+   setLiftTarget(0);
+   pros::delay(100);
 
 //    //Above is good enough dont mess
 
-//    // Loader pin #3: use the scoring pose as a local origin for the pickup path.
-   chassis.setPose(0,0,0);
-   setLiftTarget(90);
-   moveArmAuton(90);
-   pros::delay(1000);
-    followPathWithMechanisms(loader_txt, 8, 3000, false, -90, true, 0, true, 0);
+   // Loader pin #3: use the scoring pose as a local origin for the pickup path.
+   chassis.setPose(-31.646, -46.786,90);
+    followPathWithMechanisms(pathjerryloader_txt, 8, 3000, false, -90, true, 0, true, 0);
    pros::delay(1000);
     followPathWithMechanisms(
-     goal_txt, 8, 3000, true,
+     pathjerrygoal_txt, 8, 3000, true,
      90, true, 60, false,
      14, 26, 120, 2
  );
@@ -764,15 +765,12 @@ void autonomous() {
    pros::delay(1000);
    claw.move_voltage(0);
 
-   // Loader pin #4: repeat the lane entry and raise to 150 on the way out.
-   chassis.setPose(0,0,0);
-   setLiftTarget(90);
-   moveArmAuton(90);
-   pros::delay(1000);
-    followPathWithMechanisms(loader_txt, 8, 3000, false, -90, true, 0, true, 0);
+//    // Loader pin #4: repeat the lane entry and raise to 150 on the way out.
+    chassis.setPose(-31.646, -46.786,90);
+    followPathWithMechanisms(pathjerryloader_txt, 8, 3000, false, -90, true, 0, true, 0);
    pros::delay(1000);
     followPathWithMechanisms(
-     goal_txt, 8, 3000, true,
+     pathjerrygoal_txt, 8, 3000, true,
      90, true, 60, false,
      14, 26, 120, 3
  );
@@ -780,114 +778,94 @@ void autonomous() {
    pros::delay(1000);
    claw.move_voltage(0);
 
-   // Loader pin #5: the pictured goal is the origin of this new path pair.
-   // Goal 2 — first intermediate
-followPathWithMechanisms(
-    loader_txt, 8, 6000, false,
-    -90, true, 0, true
-);
+    //Loader pin #5: the pictured goal is the origin of this new path pair.
+//    // Goal 2 — first intermediate
+chassis.setPose(-31.646, -46.786,90);
+    followPathWithMechanisms(pathjerryloader_txt, 8, 3000, false, -90, true, 0, true, 0);
+   pros::delay(1000);
 
-chassis.setPose(-13.5, -37.5, 90);
-pros::delay(1000);
+chassis.setPose(-62.253, -58.81, 90);
 
 followPathWithMechanisms(
-    goal2_txt, 8, 6000, true,
+    pathjerrygoal2_txt, 10, 6000, true,
     90, true, 60, false,
     2, -1, -1, 0
 );
 
-setLiftTarget(0);
-claw.move_voltage(-12000);
-pros::delay(500);
-claw.brake();
+pros::delay(1000);
 
+//loader pin 6
 
-// Goal 2 — actual run
-chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-chassis.waitUntilDone();
-chassis.setPose(0, 0, 0);
-
+chassis.setPose(-47.223, -34.389, 0);
 followPathWithMechanisms(
-    loader2_txt, 8, 6000, false,
+    testgoal_txt, 10, 6000, false,
     -90, true, 0, true
 );
 
 pros::delay(1000);
-
-// The robot is stationary at the loader; anchor the return to goal2's start.
-chassis.setPose(-14.5, -37, 90);
+chassis.setPose(-62.253, -58.81, 90);
 
 followPathWithMechanisms(
-    goal2_txt, 8, 6000, true,
+    pathjerrygoal2_txt, 10, 6000, true,
     90, true, 60, false,
     2, -1, -1, 1
 );
 
-setLiftTarget(0);
-claw.move_voltage(-12000);
-pros::delay(500);
-claw.brake();
+pros::delay(1000);
 
-   //Loader 7
-   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-chassis.waitUntilDone();
-chassis.setPose(0, 0, 0);
-
+// //    //Loader 7
+chassis.setPose(-47.223, -34.389, 0);
 followPathWithMechanisms(
-    loader2_txt, 8, 6000, false,
+    testgoal_txt, 10, 6000, false,
     -90, true, 0, true
 );
 
 pros::delay(1000);
-
-// The robot is stationary at the loader; anchor the return to goal2's start.
-chassis.setPose(-14.5, -37, 90);
+chassis.setPose(-62.253, -58.81, 90);
 
 followPathWithMechanisms(
-    goal2_txt, 8, 6000, true,
+    pathjerrygoal2_txt, 10, 6000, true,
     90, true, 60, false,
     2, -1, -1, 2
 );
 
-setLiftTarget(0);
-claw.move_voltage(-12000);
-pros::delay(500);
-claw.brake();
+pros::delay(1000);
 
-   //Loader 8
-   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-chassis.waitUntilDone();
-chassis.setPose(0, 0, 0);
+// //    //Loader 8
+chassis.setPose(-47.223, -34.389, 0);
+followPathWithMechanisms(
+    testgoal_txt, 10, 6000, false,
+    -90, true, 0, true
+);
+
+pros::delay(1000);
+chassis.setPose(-62.253, -58.81, 90);
 
 followPathWithMechanisms(
-    loader2_txt, 8, 6000, false,
+    pathjerrygoal2_txt, 10, 6000, true,
+    90, true, 60, false,
+    2, -1, -1, 3
+);
+
+pros::delay(1000);
+
+// //return for last pin
+chassis.setPose(-47.223, -34.389, 0);
+followPathWithMechanisms(
+    testgoal_txt, 10, 6000, false,
     -90, true, 0, true
 );
 
 pros::delay(1000);
 
-// The robot is stationary at the loader; anchor the return to goal2's start.
-chassis.setPose(-14.5, -37, 90);
-
-followPathWithMechanisms(
-    goal2_txt, 8, 6000, true,
-    90, true, 60, false,
-    2, -1, -1, 3
-);
-
-setLiftTarget(0);
-claw.move_voltage(-12000);
-pros::delay(500);
-claw.brake();
-
-   // Middle Pin
-   chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-   chassis.waitUntilDone();
-   chassis.setPose(0,0,0);
-   followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
-   chassis.setPose(-13.5, -37.5, 90);
-   pros::delay(1000);
-   chassis.moveToPose(48, 24, 45, 6000);
+//    // Middle Pin
+//    chassis.turnToHeading(0, 1000, {.maxSpeed=45});
+//    chassis.waitUntilDone();
+//    chassis.setPose(0,0,0);
+//    followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
+//    chassis.setPose(-13.5, -37.5, 90);
+//    pros::delay(1000);
+//    chassis.moveToPose(48, 24, 45, 6000);
     
     
 }
