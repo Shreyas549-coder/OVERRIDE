@@ -665,57 +665,57 @@ ASSET(pathjerrygoal_txt);
 ASSET(pathjerrygoal2_txt);
 ASSET(pathjerryloader2_txt);
 ASSET(testgoal_txt);
+ASSET(finalloaderongoal1_txt);
+ASSET(pathjerrymiddle_txt);
 
 void autonomous() {
 
    liftAutonomousMode = true;
    enableLiftPID();
 
-//    chassis.setPose(0, 0, 180);
+   chassis.setPose(0, 0, 180);
    
    
-//    claw.move_voltage(12000);
+   claw.move_voltage(12000);
 
-//    // Toggle roller while the claw runs.
-//    chassis.moveToPoint(0, 8, 500, {.forwards=false, .minSpeed = 33});
-//    moveArmAuton(90);
-//    chassis.turnToHeading(0, 750, {.maxSpeed=60});
-//    chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
-//    pros::delay(500);
-//    chassis.moveToPoint(0, 6, 500, {.minSpeed = 33});
-//    pros::delay(500);
-//    chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
-//    pros::delay(500);
+   // Toggle roller while the claw runs.
+   chassis.moveToPoint(0, 8, 500, {.forwards=false, .minSpeed = 33});
+   moveArmAuton(90);
+   chassis.turnToHeading(0, 750, {.maxSpeed=60});
+   chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
+   pros::delay(500);
 
-//    // Score the preload, then lower the lift before releasing it.
-//    setLiftTarget(100);
-//    chassis.moveToPose(-24, 16, -90, 1500, {.lead = 0.4, .maxSpeed = 70, .minSpeed = 30});
-//    moveArmAuton(90);
-//    chassis.waitUntilDone();
-//    setLiftTarget(0);
-//    claw.move_voltage(-12000);
-//    pros::delay(300);
-//    moveArmAuton(-90);
-//    claw.brake();
+   // Score the preload, then lower the lift before releasing it.
+   setLiftTarget(100);
+   chassis.moveToPose(-24, 16, -90, 3000, {.lead = 0.4, .maxSpeed = 60, .minSpeed = 30});
+   moveArmAuton(90);
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   claw.move_voltage(-12000);
+   pros::delay(300);
+   claw.brake();
 
 
-//       chassis.moveToPose(25, 45, -150, 3000, {.forwards=false, .lead=0});
+      chassis.moveToPose(25, 41, -150, 6000, {.forwards=false, .lead=0, .maxSpeed=30});
       
-//     claw.move_voltage(12000);
-//     chassis.waitUntilDone();
-//     chassis.moveToPose(38, 43, 90, 2000, {.maxSpeed=55});
-//    moveArmAuton(90);
-//    pros::delay(100);
-//    setLiftTarget(60);
-//    chassis.waitUntilDone();
-//    setLiftTarget(0);
-//    pros::delay(200);
-//    claw.move_voltage(-12000);
-//    //Re-anchor at the first-goal scoring pose used to tune the U-turn.
-//     chassis.setPose(-23.614, -37.576, 180);
-// //    // Sweep around to the second toggle in one backward motion.
-//    chassis.follow(uturn_txt, 12, 3000, false);
-//    chassis.waitUntilDone();
+      
+    claw.move_voltage(12000);
+
+   moveArmAuton(-90);
+    chassis.waitUntilDone();
+    chassis.moveToPose(39, 42, 90, 2000, {.maxSpeed=55});
+   moveArmAuton(90);
+   pros::delay(100);
+   setLiftTarget(60);
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   pros::delay(200);
+   claw.move_voltage(-12000);
+   //Re-anchor at the first-goal scoring pose used to tune the U-turn.
+    chassis.setPose(-23.614, -37.576, 180);
+//    // Sweep around to the second toggle in one backward motion.
+   chassis.follow(uturn_txt, 12, 3000, false);
+   chassis.waitUntilDone();
    
 
 //    Dont change above. Everything above works. DONT CHANGE
@@ -743,15 +743,17 @@ void autonomous() {
 
    // Previous scoring sequence, to be adapted after the new pickup path is tested.
    chassis.setPose(0, 0, 90);
-   chassis.moveToPose(4, 18, 0, 1500, {.lead=0, .maxSpeed=80});
+   chassis.moveToPose(4, 15, 10, 5000, {.lead=0, .maxSpeed=80});
+   moveArmAuton(90);
    setLiftTarget(90);
    chassis.waitUntilDone();
-   moveArmAuton(90);
    setLiftTarget(0);
    pros::delay(100);
 
 //    //Above is good enough dont mess
 
+    moveArmAuton(90);
+    pros::delay(1000);
    // Loader pin #3: use the scoring pose as a local origin for the pickup path.
    chassis.setPose(-31.646, -46.786,90);
     followPathWithMechanisms(pathjerryloader_txt, 8, 3000, false, -90, true, 0, true, 0);
@@ -761,6 +763,7 @@ void autonomous() {
      90, true, 60, false,
      14, 26, 120, 2
  );
+ chassis.waitUntilDone();
    claw.move_voltage(-12000);
    pros::delay(1000);
    claw.move_voltage(0);
@@ -781,7 +784,7 @@ void autonomous() {
     //Loader pin #5: the pictured goal is the origin of this new path pair.
 //    // Goal 2 — first intermediate
 chassis.setPose(-31.646, -46.786,90);
-    followPathWithMechanisms(pathjerryloader_txt, 8, 3000, false, -90, true, 0, true, 0);
+    followPathWithMechanisms(finalloaderongoal1_txt, 8, 3000, false, -90, true, 0, true, 0);
    pros::delay(1000);
 
 chassis.setPose(-62.253, -58.81, 90);
@@ -792,7 +795,9 @@ followPathWithMechanisms(
     2, -1, -1, 0
 );
 
+claw.move_voltage(-12000);
 pros::delay(1000);
+claw.move_voltage(0);
 
 //loader pin 6
 
@@ -811,7 +816,9 @@ followPathWithMechanisms(
     2, -1, -1, 1
 );
 
+claw.move_voltage(-12000);
 pros::delay(1000);
+claw.move_voltage(0);
 
 // //    //Loader 7
 chassis.setPose(-47.223, -34.389, 0);
@@ -829,7 +836,9 @@ followPathWithMechanisms(
     2, -1, -1, 2
 );
 
+claw.move_voltage(-12000);
 pros::delay(1000);
+claw.move_voltage(0);
 
 // //    //Loader 8
 chassis.setPose(-47.223, -34.389, 0);
@@ -847,7 +856,9 @@ followPathWithMechanisms(
     2, -1, -1, 3
 );
 
+claw.move_voltage(-12000);
 pros::delay(1000);
+claw.move_voltage(0);
 
 // //return for last pin
 chassis.setPose(-47.223, -34.389, 0);
@@ -858,14 +869,14 @@ followPathWithMechanisms(
 
 pros::delay(1000);
 
-//    // Middle Pin
-//    chassis.turnToHeading(0, 1000, {.maxSpeed=45});
-//    chassis.waitUntilDone();
-//    chassis.setPose(0,0,0);
-//    followPathWithMechanisms(loader2_txt, 8, 6000, false, -90, true, 0, true);
-//    chassis.setPose(-13.5, -37.5, 90);
-//    pros::delay(1000);
-//    chassis.moveToPose(48, 24, 45, 6000);
+   // Middle Pin
+   chassis.setPose(-63.052, -58.292, 90);
+   followPathWithMechanisms(
+    pathjerrymiddle_txt, 15, 6000, true,
+    90, true, 60, false,
+    2, -1, -1, 3
+);
+pros::delay(5000);
     
     
 }
