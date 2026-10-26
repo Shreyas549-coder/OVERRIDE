@@ -927,6 +927,45 @@ pros::delay(5000);
 #define LIFT_STR2(x) #x
 #define LIFT_STR(x) LIFT_STR2(x)
 
+// =====================================================================
+// DRIVER ARM POSITION CONTROL
+// =====================================================================
+
+double driverArmTarget = 0;
+
+const double DRIVER_ARM_KP = 100.0;
+const double DRIVER_ARM_KD = 10.0;
+const double DRIVER_ARM_TOLERANCE = 3.0;
+
+const int32_t DRIVER_ARM_MAX_VOLTAGE = 9000;
+const int32_t DRIVER_ARM_HOLD_VOLTAGE = 2000;
+
+void updateDriverArm() {
+    double current = arm.get_position();
+    double error = driverArmTarget - current;
+
+    static double lastPosition = 0;
+    double velocity = current - lastPosition;
+    lastPosition = current;
+
+    double output = DRIVER_ARM_KP * error
+                  - DRIVER_ARM_KD * velocity;
+
+    // Stop correcting once the arm is close enough.
+    if (std::fabs(error) <= DRIVER_ARM_TOLERANCE) {
+    output = (driverArmTarget >= 0)
+        ? DRIVER_ARM_HOLD_VOLTAGE
+        : -DRIVER_ARM_HOLD_VOLTAGE;
+}
+
+    if (output > DRIVER_ARM_MAX_VOLTAGE)
+        output = DRIVER_ARM_MAX_VOLTAGE;
+
+    if (output < -DRIVER_ARM_MAX_VOLTAGE)
+        output = -DRIVER_ARM_MAX_VOLTAGE;
+
+    arm.move_voltage(static_cast<int32_t>(output));
+}
 
 void opcontrol() {
    liftAutonomousMode = false;
@@ -939,6 +978,10 @@ void opcontrol() {
 
    arm.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
    arm.tare_position();
+   driverArmTarget = 0;
+
+   liftLeft.set_current_limit(1000);
+   liftRight.set_current_limit(1000);
 
 
 #if LIFT_TUNE_MODE == 1
@@ -1126,12 +1169,13 @@ void opcontrol() {
    const int32_t APPROACH_SPEED = 2500;
    const int32_t GENTLE_HOLD = 3000;
 
-
+liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    while (true) {
        int leftY = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
-       int rightY = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
+       int rightY = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y);
        double current_pos = arm.get_position();
-       chassis.arcade(leftY, rightY);
+       chassis.tank(leftY, rightY);
 
        // liftTask is idle in this mode, so read the sensor here to keep the
        // brain screen alive.
@@ -1157,35 +1201,35 @@ void opcontrol() {
        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
            claw.move_voltage(-12000);
        } else {
-           claw.brake();
+           claw.move_voltage(12000/5);
        }
 
 
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
-           if (current_pos >= HOLD_ZONE_ANGLE) {
-               arm.move_voltage(GENTLE_HOLD);
-           } else if (current_pos >= SLOW_ZONE_ANGLE) {
-               arm.move_voltage(APPROACH_SPEED);
-           } else {
-               arm.move_voltage(MAX_SPEED);
-           }
-       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2)) {
-           if (current_pos <= -HOLD_ZONE_ANGLE) {
-               arm.move_voltage(-GENTLE_HOLD);
-           } else if (current_pos <= -SLOW_ZONE_ANGLE) {
-               arm.move_voltage(-APPROACH_SPEED);
-           } else {
-               arm.move_voltage(-MAX_SPEED);
-           }
-       } else {
-           if (current_pos >= HOLD_ZONE_ANGLE) {
-               arm.move_voltage(GENTLE_HOLD);
-           } else if (current_pos <= -HOLD_ZONE_ANGLE) {
-               arm.move_voltage(-GENTLE_HOLD);
-           } else {
-               arm.move_voltage(0);
-           }
-       }
+       // R1 = target +90 degrees
+        // R2 = target -90 degrees
+        // Pressing either button commands the target once.
+
+        if (controller.get_digital_new_press(
+                pros::E_CONTROLLER_DIGITAL_X)) {
+            driverArmTarget = 90;
+        }
+
+        if (controller.get_digital_new_press(
+                pros::E_CONTROLLER_DIGITAL_A)) {
+            driverArmTarget = -90;
+        }
+
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
+            driverArmTarget = 90;
+        }
+
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2)) {
+            driverArmTarget = -90;
+            liftLeft.move_voltage(-9000);
+           liftRight.move_voltage(-9000);
+        }
+
+        updateDriverArm();
    }
 #endif
 }
