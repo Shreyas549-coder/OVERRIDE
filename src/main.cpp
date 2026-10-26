@@ -508,6 +508,7 @@ void moveArmAuton(double targetAngle, int timeoutMs = 3000) {
 // Start the arm at 2 inches without blocking the 5-inch lift/intake trigger.
 
 
+
 void followPathWithMechanisms(const asset& path,
     float lookahead,
     int timeoutMs,
@@ -672,7 +673,7 @@ void autonomous() {
 
    liftAutonomousMode = true;
    enableLiftPID();
-
+/*
    chassis.setPose(0, 0, 180);
    
    
@@ -766,6 +767,7 @@ void autonomous() {
 
     moveArmAuton(90);
     pros::delay(1000);
+    */
    // Loader pin #3: use the scoring pose as a local origin for the pickup path.
    chassis.setPose(-31.646, -46.786,90);
     followPathWithMechanisms(pathjerryloader_txt, 8, 3000, false, -90, true, 0, true, 0);
@@ -774,10 +776,11 @@ void autonomous() {
     pros::delay(1000);
     followPathWithMechanisms(
      pathjerrygoal_txt, 8, 3000, true,
-     90, true, 40, false,
+     90, true, 0, false,
      14, 30, 120, 2
  );
  chassis.waitUntilDone();
+ setLiftTarget(60);
  pros::delay(500);
    claw.move_voltage(-12000);
    pros::delay(500);
@@ -792,10 +795,11 @@ void autonomous() {
    pros::delay(1000);
     followPathWithMechanisms(
      pathjerrygoal_txt, 8, 3000, true,
-     90, true, 40, false,
+     90, true, 0, false,
      14, 30, 120, 3
  );
 chassis.waitUntilDone();
+ setLiftTarget(60);
  pros::delay(500);
    claw.move_voltage(-12000);
    pros::delay(500);
