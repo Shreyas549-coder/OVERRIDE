@@ -1173,7 +1173,7 @@ void opcontrol() {
             liftRight.set_current_limit(2500);
             liftLeft.move_voltage(-8000);
             liftRight.move_voltage(-8000);
-            arm.move_voltage(-12000);
+            arm.move_voltage(-6000);
             lastArmDirection=1;
 
 
