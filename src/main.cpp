@@ -1183,21 +1183,15 @@ void opcontrol() {
        chassis.tank(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
                     controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y));
 
-       int liftCommand = 0;
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) liftCommand = LIFT_DRIVER_VOLTAGE;
-       else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
-           const double angle = getLiftAngle();
-           if (liftSensorOK && angle > LIFT_BOTTOM_STOP_ANGLE) {
-               liftCommand = angle < LIFT_BOTTOM_SLOW_ANGLE
-                   ? -LIFT_BOTTOM_VOLTAGE : -LIFT_DOWN_VOLTAGE;
-           }
-       }
-       if (liftCommand != 0) {
-           liftPIDEnabled = false;
-           liftLeft.move_voltage(liftCommand);
-           liftRight.move_voltage(liftCommand);
-       } else if (!liftPIDEnabled) {
-           enableLiftPID();  // capture this height and hold it after release
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
+        liftLeft.move_voltage(12000);
+        liftRight.move_voltage(12000);
+       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) {
+        liftLeft.move_voltage(-8000);
+        liftRight.move_voltage(-8000);
+       } else {
+        liftLeft.brake();
+        liftRight.brake();
        }
 
        int clawCommand = 0;
