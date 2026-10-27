@@ -1168,7 +1168,6 @@ void opcontrol() {
    // -----------------------------------------------------------------
    liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-   enableLiftPID();
 
    const int32_t LIFT_DRIVER_VOLTAGE = 12000;
    const int32_t LIFT_DOWN_VOLTAGE = 4500;
@@ -1200,14 +1199,14 @@ void opcontrol() {
        if (clawCommand != 0) claw.move_voltage(clawCommand);
        else claw.move_voltage(3000);
 
-       int armCommand = 0;
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1))
-           armCommand = armFlipVoltage(arm.get_position(), 90.0);
-       else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2))
-           armCommand = armFlipVoltage(arm.get_position(), -90.0);
-       if (armCommand != 0) lastArmDirection = armCommand > 0 ? 1 : -1;
-       else armCommand = lastArmDirection * ARM_IDLE_DOWN_VOLTAGE;
-       arm.move_voltage(armCommand);
+       
+       if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L1)) {
+            driverArmTarget = 90;
+        } else if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L2)) {
+            driverArmTarget = -90;
+        }
+
+        updateDriverArm();
 
        pros::delay(10);
    }
