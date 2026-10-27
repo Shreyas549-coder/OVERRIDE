@@ -175,7 +175,6 @@ const char* initStage = "boot";
 // kept apart on purpose: when the lift sits at the wrong height, seeing which
 // of the two is winning tells you immediately whether the table is wrong or
 // the gains are.
-//nigger
 double liftAngleNow = 0;    // last trusted angle, in lift degrees
 double liftPIDNow = 0;      // PID part of the last output
 double liftFFNow = 0;       // feedforward part of the last output
