@@ -1147,6 +1147,10 @@ void opcontrol() {
        if (clawCommand != 0) claw.move_voltage(clawCommand);
        else claw.move_voltage(3000);
 
+        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
+            arm.move_voltage(12000);
+            lastArmDirection=1;
+        }
        
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
             arm.move_voltage(12000);
@@ -1156,9 +1160,9 @@ void opcontrol() {
             lastArmDirection=-1;
         } else {
             if (lastArmDirection == 1) {
-                arm.move_voltage(2000);
+                arm.move_voltage(4000);
             } else if (lastArmDirection == -1) {
-                arm.move_voltage(-2000);
+                arm.move_voltage(-4000);
             } else {
                 arm.move_voltage(0);
             }
