@@ -692,7 +692,7 @@ void autonomous() {
    //chassis.moveToPose(-24, 12, -90, 3000, {.lead = 0.4, .maxSpeed = 60, .minSpeed = 30});
 
    chassis.moveToPoint(0, 18, 1000, {.maxSpeed = 60});
-    chassis.turnToHeading(-90, 1000);
+    chassis.turnToHeading(-90, 750);
     chassis.moveToPoint(-24, 18, 1000, {.maxSpeed = 60});
 
    moveArmAuton(90);
@@ -711,15 +711,15 @@ void autonomous() {
 
    moveArmAuton(-90);
     chassis.waitUntilDone();
-    chassis.moveToPose(39, 45, 90, 2000, {.maxSpeed=55});
+    chassis.moveToPose(39, 45, 90, 1000, {.maxSpeed=55});
    moveArmAuton(90);
    pros::delay(100);
    setLiftTarget(60);
    chassis.waitUntilDone();
    setLiftTarget(0);
-   pros::delay(1500);
+   pros::delay(200);
    claw.move_voltage(-12000);
-   pros::delay(300);
+   pros::delay(200);
    claw.brake();
    
    //Re-anchor at the first-goal scoring pose used to tune the U-turn.
@@ -754,7 +754,7 @@ void autonomous() {
 
    // Previous scoring sequence, to be adapted after the new pickup path is tested.
    chassis.setPose(0, 0, 90);
-   chassis.moveToPose(8, 15, 10, 2500, {.lead=0, .maxSpeed=80});
+   chassis.moveToPose(8, 15, 10, 1500, {.lead=0, .maxSpeed=80});
    moveArmAuton(90);
    setLiftTarget(90);
    chassis.waitUntilDone();
@@ -767,65 +767,64 @@ void autonomous() {
 //    //Above is good enough dont mess
 
     moveArmAuton(90);
-    pros::delay(1000);
     */
    // Loader pin #3: use the scoring pose as a local origin for the pickup path.
    chassis.setPose(-31.646, -46.786,90);
-    followPathWithMechanisms(pathjerryloader_txt, 8, 3000, false, -90, true, 0, true, 0);
+    followPathWithMechanisms(pathjerryloader_txt, 8, 2000, false, -90, true, 0, true, 0);
    chassis.waitUntil(10);
     claw.move_voltage(12000);
-    pros::delay(1000);
+    pros::delay(500);
     followPathWithMechanisms(
-     pathjerrygoal_txt, 8, 3000, true,
+     pathjerrygoal_txt, 8, 2000, true,
      90, true, 0, false,
      14, 30, 120, 2
  );
  chassis.waitUntilDone();
  setLiftTarget(60);
- pros::delay(500);
+ pros::delay(200);
    claw.move_voltage(-12000);
-   pros::delay(500);
+   pros::delay(200);
    claw.move_voltage(0);
 
 //    // Loader pin #4: repeat the lane entry and raise to 150 on the way out.
     chassis.setPose(-31.646, -46.786,90);
     
-    followPathWithMechanisms(pathjerryloader_txt, 8, 3000, false, -90, true, 0, true, 0);
+    followPathWithMechanisms(pathjerryloader_txt, 8, 2000, false, -90, true, 0, true, 0);
     chassis.waitUntil(10);
     claw.move_voltage(12000);
-   pros::delay(1000);
+   pros::delay(500);
     followPathWithMechanisms(
-     pathjerrygoal_txt, 8, 3000, true,
+     pathjerrygoal_txt, 8, 2000, true,
      90, true, 0, false,
      14, 30, 120, 3
  );
 chassis.waitUntilDone();
  setLiftTarget(60);
- pros::delay(500);
+ pros::delay(200);
    claw.move_voltage(-12000);
-   pros::delay(500);
+   pros::delay(200);
    claw.move_voltage(0);
 
     //Loader pin #5: the pictured goal is the origin of this new path pair.
 //    // Goal 2 — first intermediate
 chassis.setPose(-31.646, -46.786,90);
-    followPathWithMechanisms(finalloaderongoal1_txt, 8, 3000, false, -90, true, 0, true, 0);
+    followPathWithMechanisms(pathjerryloader_txt, 8, 2000, false, -90, true, 0, true, 0);
     chassis.waitUntil(6);
     claw.move_voltage(12000);
-   pros::delay(1000);
+   pros::delay(500);
 
 chassis.setPose(-62.253, -58.81, 90);
 
 followPathWithMechanisms(
-    pathjerrygoal2_txt, 10, 6000, true,
+    pathjerrygoal2_txt, 10, 3000, true,
     90, true, 60, false,
     2, -1, -1, 0
 );
 
 chassis.waitUntilDone();
- pros::delay(500);
+ pros::delay(200);
    claw.move_voltage(-12000);
-   pros::delay(500);
+   pros::delay(200);
    claw.move_voltage(0);
 
 //loader pin 6
@@ -838,77 +837,77 @@ followPathWithMechanisms(
 chassis.waitUntil(6);
     claw.move_voltage(12000);
 
-pros::delay(1000);
+pros::delay(500);
 chassis.setPose(-62.253, -58.81, 90);
 
 followPathWithMechanisms(
-    pathjerrygoal2_txt, 10, 6000, true,
+    pathjerrygoal2_txt, 10, 2000, true,
     90, true, 60, false,
     2, -1, -1, 1
 );
 
 chassis.waitUntilDone();
- pros::delay(500);
+ pros::delay(200);
    claw.move_voltage(-12000);
-   pros::delay(500);
+   pros::delay(200);
    claw.move_voltage(0);
 
 // //    //Loader 7
 chassis.setPose(-47.223, -34.389, 0);
 followPathWithMechanisms(
-    testgoal_txt, 10, 6000, false,
+    testgoal_txt, 10, 2000, false,
     -90, true, 0, true
 );
 chassis.waitUntil(6);
     claw.move_voltage(12000);
-pros::delay(1000);
+pros::delay(500);
 chassis.setPose(-62.253, -58.81, 90);
 
 followPathWithMechanisms(
-    pathjerrygoal2_txt, 10, 6000, true,
+    pathjerrygoal2_txt, 10, 2000, true,
     90, true, 60, false,
     2, -1, -1, 2
 );
 
 chassis.waitUntilDone();
- pros::delay(500);
+ pros::delay(200);
    claw.move_voltage(-12000);
-   pros::delay(500);
+   pros::delay(200);
    claw.move_voltage(0);
 
 // //    //Loader 8
 chassis.setPose(-47.223, -34.389, 0);
 followPathWithMechanisms(
-    testgoal_txt, 10, 6000, false,
+    testgoal_txt, 10, 2000, false,
     -90, true, 0, true
 );
 
 chassis.waitUntil(6);
     claw.move_voltage(12000);
-pros::delay(1000);
+pros::delay(500);
 chassis.setPose(-62.253, -58.81, 90);
 
 followPathWithMechanisms(
-    pathjerrygoal2_txt, 10, 6000, true,
+    pathjerrygoal2_txt, 10, 2000, true,
     90, true, 60, false,
     2, -1, -1, 3
 );
 
 chassis.waitUntilDone();
- pros::delay(500);
+ pros::delay(200);
    claw.move_voltage(-12000);
-   pros::delay(500);
+   pros::delay(200);
    claw.move_voltage(0);
 
 // //return for last pin
 chassis.setPose(-47.223, -34.389, 0);
 followPathWithMechanisms(
-    testgoal_txt, 10, 6000, false,
+    testgoal_txt, 10, 2000, false,
     -90, true, 0, true
 );
 chassis.waitUntil(6);
     claw.move_voltage(12000);
-pros::delay(1000);
+pros::delay(500);
 
    // Middle Pin
    chassis.setPose(-63.052, -58.292, 90);
@@ -917,7 +916,7 @@ pros::delay(1000);
     90, true, 60, false,
     2, -1, -1, 3
 );
-pros::delay(5000);
+pros::delay(2000);
     
     
 }
