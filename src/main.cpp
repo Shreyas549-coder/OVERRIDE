@@ -1201,9 +1201,9 @@ void opcontrol() {
 
        
        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L1)) {
-            driverArmTarget = 90;
+            arm.move_voltage(8000);
         } else if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L2)) {
-            driverArmTarget = -90;
+            arm.move_voltage(-8000);
         }
 
         updateDriverArm();
