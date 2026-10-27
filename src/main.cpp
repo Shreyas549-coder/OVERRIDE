@@ -1160,13 +1160,22 @@ void opcontrol() {
                 arm.move_voltage(1000);
             } else if (lastArmDirection == -1) {
                 arm.move_voltage(-1000);
+            } else {
+                arm.move_voltage(0);
             }
         }
 
-        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2)) {
-            arm.move_voltage(-12000);
-            liftLeft.move_voltage(-12000);
-            liftRight.move_voltage(-12000);
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2)) {
+            pros::Task liftTask([]() {
+                liftLeft.move_voltage(-8000);
+                liftRight.move_voltage(-8000);
+                arm.move_voltage(-12000);
+
+                pros::delay(2000);  // Run lift motors for 2 seconds
+
+                liftLeft.move_voltage(0);
+                liftRight.move_voltage(0);
+            });
         }
 
        pros::delay(10);
