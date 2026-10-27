@@ -930,7 +930,14 @@ pros::delay(2000);
 // =====================================================================
 // DRIVER ARM POSITION CONTROL
 // =====================================================================
-
+int32_t armFlipVoltage(double currentAngle, double targetAngle) {
+    const int32_t direction = targetAngle > 0 ? 1 : -1;
+    double remaining = direction * (targetAngle - currentAngle);
+    if (remaining < 0) remaining = 0;
+    const int32_t magnitude = remaining > 20.0 ? ARM_MAX_VOLTAGE
+        : remaining > 8.0 ? ARM_MEDIUM_VOLTAGE : ARM_FINAL_VOLTAGE;
+    return direction * magnitude;
+}
 double driverArmTarget = 0;
 
 const double DRIVER_ARM_KP = 100.0;
@@ -1160,76 +1167,56 @@ void opcontrol() {
    // -----------------------------------------------------------------
    // MODE 0, normal driver control.
    // -----------------------------------------------------------------
-   liftPIDEnabled = false;
+   liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+   liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+   enableLiftPID();
+
+   const int32_t LIFT_DRIVER_VOLTAGE = 12000;
+   const int32_t LIFT_DOWN_VOLTAGE = 4500;
+   const int32_t LIFT_BOTTOM_VOLTAGE = 2000;
+   const double LIFT_BOTTOM_SLOW_ANGLE = 40.0;
+   const double LIFT_BOTTOM_STOP_ANGLE = 2.0;
+   const int32_t ARM_IDLE_DOWN_VOLTAGE = 2000;
+   int lastArmDirection = 0;
 
 
-   const double SLOW_ZONE_ANGLE = 65.0;
-   const double HOLD_ZONE_ANGLE = 85.0;
-   const int32_t MAX_SPEED = 9000;
-   const int32_t APPROACH_SPEED = 2500;
-   const int32_t GENTLE_HOLD = 3000;
-
-liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    while (true) {
-       int leftY = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
-       int rightY = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y);
-       double current_pos = arm.get_position();
-       chassis.tank(leftY, rightY);
+       chassis.tank(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
+                    controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y));
 
-       // liftTask is idle in this mode, so read the sensor here to keep the
-       // brain screen alive.
-       getLiftAngle();
+       int liftCommand = 0;
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) liftCommand = LIFT_DRIVER_VOLTAGE;
+       else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
+           const double angle = getLiftAngle();
+           if (liftSensorOK && angle > LIFT_BOTTOM_STOP_ANGLE) {
+               liftCommand = angle < LIFT_BOTTOM_SLOW_ANGLE
+                   ? -LIFT_BOTTOM_VOLTAGE : -LIFT_DOWN_VOLTAGE;
+           }
+       }
+       if (liftCommand != 0) {
+           liftPIDEnabled = false;
+           liftLeft.move_voltage(liftCommand);
+           liftRight.move_voltage(liftCommand);
+       } else if (!liftPIDEnabled) {
+           enableLiftPID();  // capture this height and hold it after release
+       }
+
+       int clawCommand = 0;
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) clawCommand = 12000;
+       else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2)) clawCommand = -12000;
+       if (clawCommand != 0) claw.move_voltage(clawCommand);
+       else claw.move_voltage(3000);
+
+       int armCommand = 0;
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1))
+           armCommand = armFlipVoltage(arm.get_position(), 90.0);
+       else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2))
+           armCommand = armFlipVoltage(arm.get_position(), -90.0);
+       if (armCommand != 0) lastArmDirection = armCommand > 0 ? 1 : -1;
+       else armCommand = lastArmDirection * ARM_IDLE_DOWN_VOLTAGE;
+       arm.move_voltage(armCommand);
 
        pros::delay(10);
-
-
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
-           liftLeft.move_voltage(9000);
-           liftRight.move_voltage(9000);
-       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
-           liftLeft.move_voltage(-9000);
-           liftRight.move_voltage(-9000);
-       } else {
-           liftLeft.brake();
-           liftRight.brake();
-       }
-
-
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) {
-           claw.move_voltage(12000);
-       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
-           claw.move_voltage(-12000);
-       } else {
-           claw.move_voltage(12000/5);
-       }
-
-
-       // R1 = target +90 degrees
-        // R2 = target -90 degrees
-        // Pressing either button commands the target once.
-
-        if (controller.get_digital_new_press(
-                pros::E_CONTROLLER_DIGITAL_X)) {
-            driverArmTarget = 90;
-        }
-
-        if (controller.get_digital_new_press(
-                pros::E_CONTROLLER_DIGITAL_A)) {
-            driverArmTarget = -90;
-        }
-
-        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
-            driverArmTarget = 90;
-        }
-
-        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2)) {
-            driverArmTarget = -90;
-            liftLeft.move_voltage(-9000);
-           liftRight.move_voltage(-9000);
-        }
-
-        updateDriverArm();
    }
 #endif
 }
