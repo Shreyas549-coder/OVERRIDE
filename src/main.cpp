@@ -1174,6 +1174,8 @@ void opcontrol() {
             liftLeft.move_voltage(-8000);
             liftRight.move_voltage(-8000);
             arm.move_voltage(-12000);
+            lastArmDirection=1;
+
 
             if (pros::millis() - r2TaskStart >= 2000) {
                 liftLeft.move_voltage(0);
