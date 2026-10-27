@@ -1148,11 +1148,9 @@ void opcontrol() {
        else claw.move_voltage(3000);
 
         if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
-            arm.move_voltage(12000);
-            lastArmDirection=1;
-        }
-       
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
+            arm.move_voltage(2000);
+            lastArmDirection=0;
+        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
             arm.move_voltage(12000);
             lastArmDirection=1;
         } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
@@ -1160,9 +1158,9 @@ void opcontrol() {
             lastArmDirection=-1;
         } else {
             if (lastArmDirection == 1) {
-                arm.move_voltage(3000);
+                arm.move_voltage(2500);
             } else if (lastArmDirection == -1) {
-                arm.move_voltage(-5000);
+                arm.move_voltage(-4000);
             } else {
                 arm.move_voltage(0);
             }
