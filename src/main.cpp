@@ -1129,76 +1129,90 @@ void opcontrol() {
     uint32_t r2TaskStart = 0;
 
 
+   
    while (true) {
        chassis.tank(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
                     controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y));
 
-        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2)
-            && !r2TaskRunning) {
-            r2TaskRunning = true;
-            r2TaskStart = pros::millis();
-        }
-        
-       
+       // R1 cancels the R2 sequence immediately, at any point.
+       // The normal R1 arm control below will then run this same loop.
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
+           r2TaskRunning = false;
+       }
+
+       // Start the R2 sequence on a new press.
+       if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2)
+           && !r2TaskRunning) {
+           r2TaskRunning = true;
+           r2TaskStart = pros::millis();
+       }
 
        int clawCommand = 0;
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) clawCommand = 12000;
-       else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) clawCommand = -12000;
-       if (clawCommand != 0) claw.move_voltage(clawCommand);
-       else claw.move_voltage(3000);
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B))
+           clawCommand = 12000;
+       else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN))
+           clawCommand = -12000;
 
-        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
-            arm.move_voltage(2000);
-            lastArmDirection=0;
-        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
-            arm.move_voltage(12000);
-            lastArmDirection=1;
-        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
-            arm.move_voltage(-12000);
-            lastArmDirection=-1;
-        } else {
-            if (lastArmDirection == 1) {
-                arm.move_voltage(2500);
-            } else if (lastArmDirection == -1) {
-                arm.move_voltage(-3000);
-            } else {
-                arm.move_voltage(0);
-            }
-        }
+       if (clawCommand != 0)
+           claw.move_voltage(clawCommand);
+       else
+           claw.move_voltage(3000);
 
-        if (r2TaskRunning) {
-            liftLeft.set_current_limit(2500);
-            liftRight.set_current_limit(2500);
-            liftLeft.move_voltage(-8000);
-            liftRight.move_voltage(-8000);
-            arm.move_voltage(-6000);
-            lastArmDirection=-1;
+       // Normal arm controls always run, including after R1 cancels R2.
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
+           arm.move_voltage(2000);
+           lastArmDirection = 0;
+       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
+           arm.move_voltage(12000);
+           lastArmDirection = 1;
+       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
+           arm.move_voltage(-12000);
+           lastArmDirection = -1;
+       } else {
+           if (lastArmDirection == 1) {
+               arm.move_voltage(2500);
+           } else if (lastArmDirection == -1) {
+               arm.move_voltage(-3000);
+           } else {
+               arm.move_voltage(0);
+           }
+       }
 
+       if (r2TaskRunning) {
+           // Run the automatic R2 sequence.
+           liftLeft.set_current_limit(2500);
+           liftRight.set_current_limit(2500);
 
-            if (pros::millis() - r2TaskStart >= 2000) {
-                liftLeft.move_voltage(0);
-                liftRight.move_voltage(0);
-                arm.move_voltage(0);
-                r2TaskRunning = false;
-            }
-        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
-            liftLeft.set_current_limit(2500);
-            liftRight.set_current_limit(2500);
-            liftLeft.move_voltage(12000);
-            liftRight.move_voltage(12000);
-        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
-            liftLeft.set_current_limit(2500);
-            liftRight.set_current_limit(2500);
-            liftLeft.move_voltage(-8000);
-            liftRight.move_voltage(-8000);
-        } else {
-            liftLeft.set_current_limit(750);
-            liftRight.set_current_limit(750);
-            liftLeft.brake();
-            liftRight.brake();
-        }
+           liftLeft.move_voltage(-8000);
+           liftRight.move_voltage(-8000);
+           arm.move_voltage(-6000);
+           lastArmDirection = -1;
+
+           if (pros::millis() - r2TaskStart >= 2000) {
+               liftLeft.move_voltage(0);
+               liftRight.move_voltage(0);
+               arm.move_voltage(0);
+               r2TaskRunning = false;
+           }
+       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
+           liftLeft.set_current_limit(2500);
+           liftRight.set_current_limit(2500);
+           liftLeft.move_voltage(12000);
+           liftRight.move_voltage(12000);
+       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
+           liftLeft.set_current_limit(2500);
+           liftRight.set_current_limit(2500);
+           liftLeft.move_voltage(-8000);
+           liftRight.move_voltage(-8000);
+       } else {
+           liftLeft.set_current_limit(750);
+           liftRight.set_current_limit(750);
+           liftLeft.brake();
+           liftRight.brake();
+       }
 
        pros::delay(10);
    }
+
 #endif
 }
