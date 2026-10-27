@@ -1131,10 +1131,10 @@ void opcontrol() {
        chassis.tank(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
                     controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y));
 
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
         liftLeft.move_voltage(12000);
         liftRight.move_voltage(12000);
-       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) {
+       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
         liftLeft.move_voltage(-8000);
         liftRight.move_voltage(-8000);
        } else {
@@ -1143,18 +1143,30 @@ void opcontrol() {
        }
 
        int clawCommand = 0;
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) clawCommand = 12000;
-       else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2)) clawCommand = -12000;
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) clawCommand = 12000;
+       else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) clawCommand = -12000;
        if (clawCommand != 0) claw.move_voltage(clawCommand);
        else claw.move_voltage(3000);
 
        
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
             arm.move_voltage(12000);
-        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
+            lastArmDirection=1;
+        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
             arm.move_voltage(-12000);
+            lastArmDirection=-1;
         } else {
-            arm.move_voltage(0);
+            if (lastArmDirection == 1) {
+                arm.move_voltage(1000);
+            } else if (lastArmDirection == -1) {
+                arm.move_voltage(-1000);
+            }
+        }
+
+        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2)) {
+            arm.move_voltage(-12000);
+            liftLeft.move_voltage(-12000);
+            liftRight.move_voltage(-12000);
         }
 
        pros::delay(10);
