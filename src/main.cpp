@@ -1125,22 +1125,21 @@ void opcontrol() {
    const double LIFT_BOTTOM_STOP_ANGLE = 2.0;
    const int32_t ARM_IDLE_DOWN_VOLTAGE = 2000;
    int lastArmDirection = 0;
+   bool r2TaskRunning = false;
+    uint32_t r2TaskStart = 0;
 
 
    while (true) {
        chassis.tank(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
                     controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y));
 
-       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
-        liftLeft.move_voltage(12000);
-        liftRight.move_voltage(12000);
-       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
-        liftLeft.move_voltage(-8000);
-        liftRight.move_voltage(-8000);
-       } else {
-        liftLeft.brake();
-        liftRight.brake();
-       }
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2)
+            && !r2TaskRunning) {
+            r2TaskRunning = true;
+            r2TaskStart = pros::millis();
+        }
+        
+       
 
        int clawCommand = 0;
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) clawCommand = 12000;
@@ -1165,17 +1164,26 @@ void opcontrol() {
             }
         }
 
-        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2)) {
-            pros::Task liftTask([]() {
-                liftLeft.move_voltage(-8000);
-                liftRight.move_voltage(-8000);
-                arm.move_voltage(-12000);
+        if (r2TaskRunning) {
+            liftLeft.move_voltage(-8000);
+            liftRight.move_voltage(-8000);
+            arm.move_voltage(-12000);
 
-                pros::delay(2000);  // Run lift motors for 2 seconds
-
+            if (pros::millis() - r2TaskStart >= 2000) {
                 liftLeft.move_voltage(0);
                 liftRight.move_voltage(0);
-            });
+                arm.move_voltage(0);
+                r2TaskRunning = false;
+            }
+        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
+            liftLeft.move_voltage(12000);
+            liftRight.move_voltage(12000);
+        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
+            liftLeft.move_voltage(-8000);
+            liftRight.move_voltage(-8000);
+        } else {
+            liftLeft.brake();
+            liftRight.brake();
         }
 
        pros::delay(10);
