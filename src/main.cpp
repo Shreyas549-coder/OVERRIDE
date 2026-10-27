@@ -1156,15 +1156,17 @@ void opcontrol() {
             lastArmDirection=-1;
         } else {
             if (lastArmDirection == 1) {
-                arm.move_voltage(1000);
+                arm.move_voltage(2000);
             } else if (lastArmDirection == -1) {
-                arm.move_voltage(-1000);
+                arm.move_voltage(-2000);
             } else {
                 arm.move_voltage(0);
             }
         }
 
         if (r2TaskRunning) {
+            liftLeft.set_current_limit(2500);
+            liftRight.set_current_limit(2500);
             liftLeft.move_voltage(-8000);
             liftRight.move_voltage(-8000);
             arm.move_voltage(-12000);
@@ -1176,12 +1178,18 @@ void opcontrol() {
                 r2TaskRunning = false;
             }
         } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
+            liftLeft.set_current_limit(2500);
+            liftRight.set_current_limit(2500);
             liftLeft.move_voltage(12000);
             liftRight.move_voltage(12000);
         } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
+            liftLeft.set_current_limit(2500);
+            liftRight.set_current_limit(2500);
             liftLeft.move_voltage(-8000);
             liftRight.move_voltage(-8000);
         } else {
+            liftLeft.set_current_limit(750);
+            liftRight.set_current_limit(750);
             liftLeft.brake();
             liftRight.brake();
         }
