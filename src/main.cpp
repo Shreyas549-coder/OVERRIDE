@@ -1160,7 +1160,7 @@ void opcontrol() {
             if (lastArmDirection == 1) {
                 arm.move_voltage(2500);
             } else if (lastArmDirection == -1) {
-                arm.move_voltage(-4000);
+                arm.move_voltage(-3000);
             } else {
                 arm.move_voltage(0);
             }
