@@ -926,52 +926,6 @@ pros::delay(2000);
 #define LIFT_STR2(x) #x
 #define LIFT_STR(x) LIFT_STR2(x)
 
-// =====================================================================
-// DRIVER ARM POSITION CONTROL
-// =====================================================================
-int32_t armFlipVoltage(double currentAngle, double targetAngle) {
-    const int32_t direction = targetAngle > 0 ? 1 : -1;
-    double remaining = direction * (targetAngle - currentAngle);
-    if (remaining < 0) remaining = 0;
-    const int32_t magnitude = remaining > 20.0 ? ARM_MAX_VOLTAGE
-        : remaining > 8.0 ? ARM_MEDIUM_VOLTAGE : ARM_FINAL_VOLTAGE;
-    return direction * magnitude;
-}
-double driverArmTarget = 0;
-
-const double DRIVER_ARM_KP = 100.0;
-const double DRIVER_ARM_KD = 10.0;
-const double DRIVER_ARM_TOLERANCE = 3.0;
-
-const int32_t DRIVER_ARM_MAX_VOLTAGE = 9000;
-const int32_t DRIVER_ARM_HOLD_VOLTAGE = 2000;
-
-void updateDriverArm() {
-    double current = arm.get_position();
-    double error = driverArmTarget - current;
-
-    static double lastPosition = 0;
-    double velocity = current - lastPosition;
-    lastPosition = current;
-
-    double output = DRIVER_ARM_KP * error
-                  - DRIVER_ARM_KD * velocity;
-
-    // Stop correcting once the arm is close enough.
-    if (std::fabs(error) <= DRIVER_ARM_TOLERANCE) {
-    output = (driverArmTarget >= 0)
-        ? DRIVER_ARM_HOLD_VOLTAGE
-        : -DRIVER_ARM_HOLD_VOLTAGE;
-}
-
-    if (output > DRIVER_ARM_MAX_VOLTAGE)
-        output = DRIVER_ARM_MAX_VOLTAGE;
-
-    if (output < -DRIVER_ARM_MAX_VOLTAGE)
-        output = -DRIVER_ARM_MAX_VOLTAGE;
-
-    arm.move_voltage(static_cast<int32_t>(output));
-}
 
 void opcontrol() {
    liftAutonomousMode = false;
@@ -982,12 +936,7 @@ void opcontrol() {
    // opcontrol is not running and the controller was never going to show text.
    initStage = "opc mode " LIFT_STR(LIFT_TUNE_MODE);
 
-   arm.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
-   arm.tare_position();
-   driverArmTarget = 0;
 
-   liftLeft.set_current_limit(1000);
-   liftRight.set_current_limit(1000);
 
 
 #if LIFT_TUNE_MODE == 1
@@ -1200,13 +1149,13 @@ void opcontrol() {
        else claw.move_voltage(3000);
 
        
-       if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L1)) {
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
             arm.move_voltage(12000);
-        } else if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L2)) {
+        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
             arm.move_voltage(-12000);
+        } else {
+            arm.move_voltage(0);
         }
-
-        updateDriverArm();
 
        pros::delay(10);
    }
