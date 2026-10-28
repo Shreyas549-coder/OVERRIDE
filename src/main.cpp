@@ -1160,7 +1160,7 @@ void opcontrol() {
 
        // Normal arm controls always run, including after R1 cancels R2.
        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
-           arm.move_voltage(2000);
+           arm.move_voltage(12000);
            lastArmDirection = 0;
        } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
            arm.move_voltage(12000);
