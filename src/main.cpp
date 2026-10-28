@@ -1218,7 +1218,7 @@ void opcontrol() {
 
        // Arm targets +90 during scoring and holds there after release.
        if (r1Held) {
-           arm.move_voltage(6000);
+           arm.move_voltage(12000);
            lastArmDirection = 0;
        } else if (xHeld) {
            arm.move_voltage(12000);
