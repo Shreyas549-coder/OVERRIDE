@@ -1112,134 +1112,63 @@ void opcontrol() {
 
 
 #else
-   // NORMAL DRIVER CONTROL
-   // B held: arm to +90, intake on, lift rises.
-   // B released: lift descends slowly, arm stays at +90,
-   // intake continues until the lift reaches the bottom.
-   // Scoring uses direct motor voltage, NOT lift PID.
-
-   liftPIDEnabled = false;
-
+   // -----------------------------------------------------------------
+   // MODE 0, normal driver control.
+   // -----------------------------------------------------------------
    liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-   arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
-   const int32_t SCORE_LIFT_UP_VOLTAGE = 6000;
-   const int32_t SCORE_LIFT_DOWN_VOLTAGE = 3000;
-   const int32_t LIFT_MANUAL_UP_VOLTAGE = 12000;
-   const int32_t LIFT_MANUAL_DOWN_VOLTAGE = 8000;
-
-   const int32_t SCORE_ARM_VOLTAGE = 12000;
-   const double SCORE_ARM_TARGET = 90.0;
-   const double SCORE_ARM_TOLERANCE = 4.0;
-
+   const int32_t LIFT_DRIVER_VOLTAGE = 12000;
+   const int32_t LIFT_DOWN_VOLTAGE = 4500;
+   const int32_t LIFT_BOTTOM_VOLTAGE = 2000;
+   const double LIFT_BOTTOM_SLOW_ANGLE = 40.0;
    const double LIFT_BOTTOM_STOP_ANGLE = 2.0;
-
-   bool scoringActive = false;
-   bool scoringDescending = false;
-   bool r2TaskRunning = false;
-   uint32_t r2TaskStart = 0;
-
+   const int32_t ARM_IDLE_DOWN_VOLTAGE = 2000;
    int lastArmDirection = 0;
+   bool r2TaskRunning = false;
+    uint32_t r2TaskStart = 0;
 
+
+   
    while (true) {
-       // Drive always remains responsive.
-       chassis.tank(
-           controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
-           controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y)
-       );
+       chassis.tank(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
+                    controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y));
 
-       const bool bHeld =
-           controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
-       const bool liftUp =
-           controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
-       const bool liftDown =
-           controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
-       const bool r1Held =
-           controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
-       const bool xHeld =
-           controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
-       const bool aHeld =
-           controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
-       const bool intakeReverse =
-           controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
-
-       const double liftAngle = getLiftAngle();
-
-       // Keep the existing R2 timed sequence.
-       if (r1Held) {
+       // R1 cancels the R2 sequence immediately, at any point.
+       // The normal R1 arm control below will then run this same loop.
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
            r2TaskRunning = false;
        }
 
-       if (controller.get_digital_new_press(
-               pros::E_CONTROLLER_DIGITAL_R2) &&
-           !r2TaskRunning) {
+       // Start the R2 sequence on a new press.
+       if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2)
+           && !r2TaskRunning) {
            r2TaskRunning = true;
            r2TaskStart = pros::millis();
-
-           scoringActive = false;
-           scoringDescending = false;
        }
 
-       if (r2TaskRunning) {
-           liftLeft.move_voltage(-8000);
-           liftRight.move_voltage(-8000);
-           arm.move_voltage(-6000);
+       int clawCommand = 0;
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B))
+           clawCommand = 12000;
+       else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN))
+           clawCommand = -12000;
 
-           if (pros::millis() - r2TaskStart >= 2000) {
-               liftLeft.move_voltage(0);
-               liftRight.move_voltage(0);
-               arm.move_voltage(0);
-               r2TaskRunning = false;
-           }
+       if (clawCommand != 0)
+           claw.move_voltage(clawCommand);
+       else
+           claw.move_voltage(3000);
 
-           pros::delay(10);
-           continue;
-       }
-
-       // B starts scoring. Releasing B switches to descent.
-       if (bHeld) {
-           scoringActive = true;
-           scoringDescending = false;
-       } else if (scoringActive) {
-           scoringDescending = true;
-       }
-
-       // Intake runs throughout scoring and descent.
-       if (intakeReverse) {
-           claw.move_voltage(-12000);
-       } else if (scoringActive && !scoringDescending) {
-    // Full intake speed while B is held.
-        claw.move_voltage(12000);
-        } else {
-            // Slow intake while descending and after scoring.
-            claw.move_voltage(3000);
-        }
-
-       // Arm targets +90 during scoring and holds there after release.
-       if (r1Held) {
-           arm.move_voltage(12000);
+       // Normal arm controls always run, including after R1 cancels R2.
+       if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
+           arm.move_voltage(2000);
            lastArmDirection = 0;
-       } else if (xHeld) {
+       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
            arm.move_voltage(12000);
            lastArmDirection = 1;
-       } else if (aHeld) {
+       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
            arm.move_voltage(-12000);
            lastArmDirection = -1;
-       } else if (scoringActive) {
-           const double armAngle = arm.get_position();
-           const double armError = SCORE_ARM_TARGET - armAngle;
-
-           if (armError > SCORE_ARM_TOLERANCE) {
-               arm.move_voltage(SCORE_ARM_VOLTAGE);
-           } else {
-               // Stop driving at the target and use HOLD braking.
-               arm.move_voltage(0);
-           }
-
-           lastArmDirection = 1;
        } else {
-           // Original idle arm behavior.
            if (lastArmDirection == 1) {
                arm.move_voltage(2500);
            } else if (lastArmDirection == -1) {
@@ -1249,44 +1178,35 @@ void opcontrol() {
            }
        }
 
-       // Lift: direct voltage only.
-       // Manual L1/L2 commands override the scoring sequence.
-       if (liftUp || liftDown) {
+       if (r2TaskRunning) {
+           // Run the automatic R2 sequence.
            liftLeft.set_current_limit(2500);
            liftRight.set_current_limit(2500);
 
-           if (liftUp) {
-               liftLeft.move_voltage(LIFT_MANUAL_UP_VOLTAGE);
-               liftRight.move_voltage(LIFT_MANUAL_UP_VOLTAGE);
-           } else {
-               liftLeft.move_voltage(-LIFT_MANUAL_DOWN_VOLTAGE);
-               liftRight.move_voltage(-LIFT_MANUAL_DOWN_VOLTAGE);
-           }
-       } else if (scoringActive) {
-           liftLeft.set_current_limit(2500);
-           liftRight.set_current_limit(2500);
+           liftLeft.move_voltage(-8000);
+           liftRight.move_voltage(-8000);
+           arm.move_voltage(-6000);
+           lastArmDirection = -1;
 
-           if (!scoringDescending) {
-               // Rise while B is held.
-               liftLeft.move_voltage(SCORE_LIFT_UP_VOLTAGE);
-               liftRight.move_voltage(SCORE_LIFT_UP_VOLTAGE);
-           } else if (liftAngle > LIFT_BOTTOM_STOP_ANGLE) {
-               // Slower descent after B is released.
-               liftLeft.move_voltage(-SCORE_LIFT_DOWN_VOLTAGE);
-               liftRight.move_voltage(-SCORE_LIFT_DOWN_VOLTAGE);
-           } else {
-               // Bottom reached: stop and hold the lift.
+           if (pros::millis() - r2TaskStart >= 2000) {
                liftLeft.move_voltage(0);
                liftRight.move_voltage(0);
-               liftLeft.brake();
-               liftRight.brake();
-
-               scoringActive = false;
-               scoringDescending = false;
+               arm.move_voltage(0);
+               r2TaskRunning = false;
            }
+       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
+           liftLeft.set_current_limit(2500);
+           liftRight.set_current_limit(2500);
+           liftLeft.move_voltage(12000);
+           liftRight.move_voltage(12000);
+       } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
+           liftLeft.set_current_limit(2500);
+           liftRight.set_current_limit(2500);
+           liftLeft.move_voltage(-8000);
+           liftRight.move_voltage(-8000);
        } else {
-           liftLeft.move_voltage(0);
-           liftRight.move_voltage(0);
+           liftLeft.set_current_limit(750);
+           liftRight.set_current_limit(750);
            liftLeft.brake();
            liftRight.brake();
        }
