@@ -1208,19 +1208,13 @@ void opcontrol() {
        // Intake runs throughout scoring and descent.
        if (intakeReverse) {
            claw.move_voltage(-12000);
-       } else if (scoringActive) {
-           if (scoringDescending &&
-               liftAngle <= LIFT_BOTTOM_STOP_ANGLE) {
-               claw.move_voltage(0);
-               scoringActive = false;
-               scoringDescending = false;
-           } else {
-               claw.move_voltage(12000);
-           }
-       } else {
-           // Preserve the normal idle intake behavior.
-           claw.move_voltage(3000);
-       }
+       } else if (scoringActive && !scoringDescending) {
+    // Full intake speed while B is held.
+        claw.move_voltage(12000);
+        } else {
+            // Slow intake while descending and after scoring.
+            claw.move_voltage(3000);
+        }
 
        // Arm targets +90 during scoring and holds there after release.
        if (r1Held) {
