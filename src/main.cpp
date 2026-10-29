@@ -673,7 +673,7 @@ void autonomous() {
 
    liftAutonomousMode = true;
    enableLiftPID();
-/*
+
    chassis.setPose(0, 0, 180);
    
    
@@ -766,7 +766,7 @@ void autonomous() {
 //    //Above is good enough dont mess
 
     moveArmAuton(90);
-    */
+    
    // Loader pin #3: use the scoring pose as a local origin for the pickup path.
    chassis.setPose(-31.646, -46.786,90);
     followPathWithMechanisms(pathjerryloader_txt, 8, 2000, false, -90, true, 0, true, 0);
