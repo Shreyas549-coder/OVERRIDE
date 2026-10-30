@@ -823,9 +823,10 @@ chassis.turnToHeading(0, 1000);
 moveArmAuton(90);
 setLiftTarget(45);
 chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
-setLiftTarget(0);
+
 
 chassis.waitUntilDone();
+setLiftTarget(0);
  pros::delay(200);
    claw.move_voltage(-12000);
    pros::delay(200);
@@ -847,12 +848,13 @@ chassis.setPose(-62.253, -58.81, 90);
 chassis.moveToPoint(-62.253+10, -58.81, 2000);
 chassis.turnToHeading(0, 1000);
 moveArmAuton(90);
-setLiftTarget(45);
-chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
 setLiftTarget(60);
+chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
+
 // goes back to goal 2, scores
 
 chassis.waitUntilDone();
+setLiftTarget(45);
  pros::delay(200);
    claw.move_voltage(-12000);
    pros::delay(200);
@@ -872,13 +874,14 @@ chassis.setPose(-62.253, -58.81, 90);
 chassis.moveToPoint(-62.253+10, -58.81, 2000);
 chassis.turnToHeading(0, 1000);
 moveArmAuton(90);
-setLiftTarget(45);
-chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
 setLiftTarget(90);
+chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
+
 
 // goes back to goal 2 again
 
 chassis.waitUntilDone();
+setLiftTarget(60);
  pros::delay(200);
    claw.move_voltage(-12000);
    pros::delay(200);
@@ -900,11 +903,12 @@ chassis.setPose(-62.253, -58.81, 90);
 chassis.moveToPoint(-62.253+10, -58.81, 2000);
 chassis.turnToHeading(0, 1000);
 moveArmAuton(90);
-setLiftTarget(45);
-chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
 setLiftTarget(120);
+chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
+
 
 chassis.waitUntilDone();
+setLiftTarget(90);
  pros::delay(200);
    claw.move_voltage(-12000);
    pros::delay(200);
