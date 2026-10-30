@@ -815,13 +815,14 @@ chassis.setPose(-31.646, -46.786,90);
     claw.move_voltage(12000);
    pros::delay(500);
 
+// set pose b4 goal 2
 chassis.setPose(-62.253, -58.81, 90);
 
-chassis.moveToPoint(-62.253+16, -58.81, 2000);
+chassis.moveToPoint(-62.253+10, -58.81, 2000);
 chassis.turnToHeading(0, 1000);
 moveArmAuton(90);
 setLiftTarget(45);
-chassis.moveToPoint(-62.253+16, -58.81+19, 2000);
+chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
 setLiftTarget(0);
 
 chassis.waitUntilDone();
@@ -831,26 +832,25 @@ chassis.waitUntilDone();
    claw.move_voltage(0);
 
 //loader pin 6
-
 chassis.setPose(-47.223, -34.389, 0);
 setLiftTarget(0);
 moveArmAuton(-90);
-chassis.moveToPoint(-47.223, -34.389-19, 2000, {.forwards=false, .minSpeed=30});
+chassis.moveToPoint(-47.223, -34.389-24, 2000, {.forwards=false, .minSpeed=30});
 chassis.turnToHeading(90, 1000);
-chassis.moveToPoint(-46.223-16,-34.389-19, 2000, {.forwards=false, .minSpeed=30});
+chassis.moveToPoint(-46.223-16,-34.389-24, 2000, {.forwards=false, .minSpeed=30});
 chassis.waitUntil(6);
     claw.move_voltage(12000);
 
 pros::delay(500);
 chassis.setPose(-62.253, -58.81, 90);
-chassis.setPose(-62.253, -58.81, 90);
 
-chassis.moveToPoint(-62.253+16, -58.81, 2000);
+chassis.moveToPoint(-62.253+10, -58.81, 2000);
 chassis.turnToHeading(0, 1000);
 moveArmAuton(90);
 setLiftTarget(45);
-chassis.moveToPoint(-62.253+16, -58.81+19, 2000);
-setLiftTarget(0);
+chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
+setLiftTarget(60);
+// goes back to goal 2, scores
 
 chassis.waitUntilDone();
  pros::delay(200);
@@ -858,26 +858,25 @@ chassis.waitUntilDone();
    pros::delay(200);
    claw.move_voltage(0);
 
-// //    //Loader 7
+//Loader 7
 chassis.setPose(-47.223, -34.389, 0);
 setLiftTarget(0);
 moveArmAuton(-90);
-chassis.moveToPoint(-47.223, -34.389-19, 2000, {.forwards=false, .minSpeed=30});
+chassis.moveToPoint(-47.223, -34.389-24, 2000, {.forwards=false, .minSpeed=30});
 chassis.turnToHeading(90, 1000);
-chassis.moveToPoint(-46.223-16,-34.389-19, 2000, {.forwards=false, .minSpeed=30});
+chassis.moveToPoint(-46.223-16,-34.389-24, 2000, {.forwards=false, .minSpeed=30});
 chassis.waitUntil(6);
     claw.move_voltage(12000);
 pros::delay(500);
 chassis.setPose(-62.253, -58.81, 90);
-
-chassis.setPose(-62.253, -58.81, 90);
-
-chassis.moveToPoint(-62.253+16, -58.81, 2000);
+chassis.moveToPoint(-62.253+10, -58.81, 2000);
 chassis.turnToHeading(0, 1000);
 moveArmAuton(90);
 setLiftTarget(45);
-chassis.moveToPoint(-62.253+16, -58.81+19, 2000);
-setLiftTarget(0);
+chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
+setLiftTarget(90);
+
+// goes back to goal 2 again
 
 chassis.waitUntilDone();
  pros::delay(200);
@@ -885,24 +884,25 @@ chassis.waitUntilDone();
    pros::delay(200);
    claw.move_voltage(0);
 
-// //    //Loader 8
+//Loader 8
 chassis.setPose(-47.223, -34.389, 0);
 setLiftTarget(0);
 moveArmAuton(-90);
-chassis.moveToPoint(-47.223, -34.389-19, 2000, {.forwards=false, .minSpeed=30});
+chassis.moveToPoint(-47.223, -34.389-24, 2000, {.forwards=false, .minSpeed=30});
 chassis.turnToHeading(90, 1000);
-chassis.moveToPoint(-46.223-16,-34.389-19, 2000, {.forwards=false, .minSpeed=30});
+chassis.moveToPoint(-46.223-16,-34.389-24, 2000, {.forwards=false, .minSpeed=30});
 chassis.waitUntil(6);
     claw.move_voltage(12000);
 pros::delay(500);
 chassis.setPose(-62.253, -58.81, 90);
 
-chassis.moveToPoint(-62.253+16, -58.81, 2000);
+// start going back to goal 2
+chassis.moveToPoint(-62.253+10, -58.81, 2000);
 chassis.turnToHeading(0, 1000);
 moveArmAuton(90);
 setLiftTarget(45);
-chassis.moveToPoint(-62.253+16, -58.81+19, 2000);
-setLiftTarget(0);
+chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
+setLiftTarget(120);
 
 chassis.waitUntilDone();
  pros::delay(200);
@@ -914,9 +914,9 @@ chassis.waitUntilDone();
 chassis.setPose(-47.223, -34.389, 0);
 setLiftTarget(0);
 moveArmAuton(-90);
-chassis.moveToPoint(-47.223, -34.389-19, 2000, {.forwards=false, .minSpeed=30});
+chassis.moveToPoint(-47.223, -34.389-24, 2000, {.forwards=false, .minSpeed=30});
 chassis.turnToHeading(90, 1000);
-chassis.moveToPoint(-46.223-16,-34.389-19, 2000, {.forwards=false, .minSpeed=30});
+chassis.moveToPoint(-46.223-16,-34.389-24, 2000, {.forwards=false, .minSpeed=30});
 chassis.waitUntil(6);
     claw.move_voltage(12000);
 pros::delay(500);
