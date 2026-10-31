@@ -149,6 +149,7 @@ const double LIFT_DOWN_SCALE = 0.7;
 // a lower target creates a large negative PID command.
 const double LIFT_AUTON_DOWN_MAX = 35.0;
 const double LIFT_AUTON_DOWN_SLEW = 8.0;
+const double LIFT_AUTON_BOTTOM_HOLD = 30.0; // move() units, only near a 0-degree target
 
 
 double liftSlewRate = 25;   // output change allowed per 10 ms loop, tune this LAST
@@ -321,6 +322,7 @@ void liftTask() {
                continue;
            }
 
+           const double previousAngle = liftPID.lastAngle;
            liftPIDNow = liftPID.update(liftTarget, currentAngle);
            liftFFNow = liftFF(currentAngle);
 
@@ -336,6 +338,14 @@ void liftTask() {
            // downward half only. The upward half and the feedforward that holds
            // it in place are untouched.
            if (output < 0) output *= LIFT_DOWN_SCALE;
+
+           // Press against the rubber bands only after the lift has slowed
+           // near its 0-degree target. Leave normal PID control for raised targets.
+           if (liftAutonomousMode && liftTarget <= LIFT_MIN &&
+               currentAngle <= 5.0 && currentAngle - previousAngle >= -0.5 &&
+               output > -LIFT_AUTON_BOTTOM_HOLD) {
+               output = -LIFT_AUTON_BOTTOM_HOLD;
+           }
 
            if (liftAutonomousMode && output < 0) {
                // Cap the downward command in autonomous. Positive output is
@@ -432,7 +442,7 @@ const int32_t ARM_MAX_VOLTAGE = 12000;
 const int32_t ARM_MEDIUM_VOLTAGE = 12000;
 const int32_t ARM_APPROACH_VOLTAGE = 9000;
 const int32_t ARM_FINAL_VOLTAGE = 2500;
-const int32_t ARM_HOLD_VOLTAGE = 3000;
+const int32_t ARM_HOLD_VOLTAGE = 5000;
 
  void moveArmAutonWithLiftTrigger(double targetAngle, double liftPeakAngle, int timeoutMs = 3000) {
     // The arm has only two valid targets.
@@ -456,7 +466,7 @@ const int32_t ARM_HOLD_VOLTAGE = 3000;
 
         // Stop the movement loop when the arm reaches its target.
         if (std::fabs(error) <= TOLERANCE) {
-            arm.move_voltage(targetAngle > 0 ? 3000 : -3000);
+            arm.move_voltage(targetAngle > 0 ? ARM_HOLD_VOLTAGE : -ARM_HOLD_VOLTAGE);
             return;
         }
 
@@ -468,7 +478,7 @@ const int32_t ARM_HOLD_VOLTAGE = 3000;
     }
 
     // Maintain torque if the movement reaches its timeout.
-    arm.move_voltage(targetAngle > 0 ? 3000 : -3000);
+    arm.move_voltage(targetAngle > 0 ? ARM_HOLD_VOLTAGE : -ARM_HOLD_VOLTAGE);
 }
 
 
@@ -671,19 +681,22 @@ ASSET(pathjerrymiddle_txt);
 ASSET(loader1path2_txt);
 ASSET(loader1path3_txt);
 ASSET(loader2path3_txt);
+ASSET(jerry2goal_txt)
 
 void autonomous() {
 
    liftAutonomousMode = true;
    enableLiftPID();
-/*
+   arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+
+   /*
    chassis.setPose(0, 0, 180);
    
    
    claw.move_voltage(12000);
 
    // Toggle roller while the claw runs.
-   chassis.moveToPoint(0, 8, 500, {.forwards=false, .minSpeed = 33});
+   chassis.moveToPoint(3, 8, 500, {.forwards=false, .minSpeed = 33});
    moveArmAuton(90);
    chassis.turnToHeading(0, 750, {.maxSpeed=60});
    chassis.moveToPoint(0, -1, 500, {.forwards = false, .minSpeed = 33});
@@ -769,34 +782,35 @@ void autonomous() {
 //    //Above is good enough dont mess
 
     moveArmAuton(90);
-    */
+*/
    // Loader pin #3: use the scoring pose as a local origin for the pickup path.
    chassis.setPose(-31.646, -46.786,90);
-    followPathWithMechanisms(pathjerryloader_txt, 8, 2000, false, -90, true, 0, true, 0);
+    followPathWithMechanisms(pathjerryloader_txt, 8, 2500, false, -90, true, 0, true, 0);
    chassis.waitUntil(10);
     claw.move_voltage(12000);
     pros::delay(500);
+    chassis.setPose(-59.438, -62.299, 90);
     followPathWithMechanisms(
      pathjerrygoal_txt, 8, 2000, true,
      90, true, 0, false,
      14, 30, 120, 2
  );
  chassis.waitUntilDone();
- setLiftTarget(60);
- pros::delay(200);
+ setLiftTarget(20);
+ pros::delay(500);
    claw.move_voltage(-12000);
-   pros::delay(200);
-   claw.move_voltage(0);
+   pros::delay(500);
 
 //    // Loader pin #4: repeat the lane entry and raise to 150 on the way out.
-    chassis.setPose(-31.646, -46.786,90);
+    chassis.setPose(-23.368, -48.38, 45);
     
-    followPathWithMechanisms(loader1path2_txt, 8, 2000, false, -90, true, 0, true, 0);
+    followPathWithMechanisms(loader1path2_txt, 12, 2000, false, -90, true, 0, true, 0);
     chassis.waitUntil(10);
     claw.move_voltage(12000);
    pros::delay(500);
+   chassis.setPose(-59.438, -62.299, 90);
     followPathWithMechanisms(
-     pathjerrygoal_txt, 8, 2000, true,
+     jerry2goal_txt, 8, 2000, true,
      90, true, 0, false,
      14, 30, 120, 3
  );
@@ -809,8 +823,8 @@ chassis.waitUntilDone();
 
     //Loader pin #5: the pictured goal is the origin of this new path pair.
 //    // Goal 2 — first intermediate
-chassis.setPose(-31.646, -46.786,90);
-    followPathWithMechanisms(loader1path3_txt, 8, 2000, false, -90, true, 0, true, 0);
+chassis.setPose(-23.368, -48.38, 45);
+    followPathWithMechanisms(loader1path3_txt, 12, 2000, false, -90, true, 0, true, 0);
     chassis.waitUntil(6);
     claw.move_voltage(12000);
    pros::delay(500);
@@ -818,11 +832,11 @@ chassis.setPose(-31.646, -46.786,90);
 // set pose b4 goal 2
 chassis.setPose(-62.253, -58.81, 90);
 
-chassis.moveToPoint(-62.253+10, -58.81, 2000);
+chassis.moveToPoint(-62.253+16, -58.81, 2000);
 chassis.turnToHeading(0, 1000);
 moveArmAuton(90);
 setLiftTarget(45);
-chassis.moveToPoint(-62.253+10, -58.81+26, 2000);
+chassis.moveToPoint(-62.253+16, -58.81+27, 2000);
 
 
 chassis.waitUntilDone();
@@ -845,11 +859,11 @@ chassis.waitUntil(6);
 pros::delay(500);
 chassis.setPose(-62.253, -58.81, 90);
 
-chassis.moveToPoint(-62.253+12, -58.81, 2000);
-chassis.turnToHeading(0, 1000);
+chassis.moveToPoint(-62.253+15, -58.81, 2000);
+chassis.turnToHeading(-10, 1000);
 moveArmAuton(90);
 setLiftTarget(60);
-chassis.moveToPoint(-62.253+12, -58.81+26, 2000);
+chassis.moveToPoint(-62.253+15, -58.81+27, 2000);
 
 // goes back to goal 2, scores
 
@@ -871,11 +885,11 @@ chassis.waitUntil(6);
     claw.move_voltage(12000);
 pros::delay(500);
 chassis.setPose(-62.253, -58.81, 90);
-chassis.moveToPoint(-62.253+14, -58.81, 2000);
-chassis.turnToHeading(0, 1000);
+chassis.moveToPoint(-62.253+15, -58.81, 2000);
+chassis.turnToHeading(-5, 1000);
 moveArmAuton(90);
 setLiftTarget(90);
-chassis.moveToPoint(-62.253+14, -58.81+26, 2000);
+chassis.moveToPoint(-62.253+15, -58.81+27, 2000);
 
 
 // goes back to goal 2 again
@@ -900,11 +914,11 @@ pros::delay(500);
 chassis.setPose(-62.253, -58.81, 90);
 
 // start going back to goal 2
-chassis.moveToPoint(-62.253+14, -58.81, 2000);
-chassis.turnToHeading(0, 1000);
+chassis.moveToPoint(-62.253+15, -58.81, 2000);
+chassis.turnToHeading(-2, 1000);
 moveArmAuton(90);
 setLiftTarget(120);
-chassis.moveToPoint(-62.253+14, -58.81+26, 2000);
+chassis.moveToPoint(-62.253+15, -58.81+27, 2000);
 
 
 chassis.waitUntilDone();
@@ -1136,6 +1150,9 @@ void opcontrol() {
    liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
    const int32_t LIFT_DRIVER_VOLTAGE = 12000;
+   const int32_t LIFT_IDLE_DOWN_VOLTAGE = 4500;
+   const int32_t LIFT_IDLE_DOWN_CURRENT_MA = 1200;
+   const double LIFT_IDLE_DOWN_MAX_ANGLE = 5.0;
    const int32_t LIFT_DOWN_VOLTAGE = 4500;
    const int32_t LIFT_BOTTOM_VOLTAGE = 2000;
    const double LIFT_BOTTOM_SLOW_ANGLE = 40.0;
@@ -1222,10 +1239,19 @@ void opcontrol() {
            liftLeft.move_voltage(-8000);
            liftRight.move_voltage(-8000);
        } else {
-           liftLeft.set_current_limit(750);
-           liftRight.set_current_limit(750);
-           liftLeft.brake();
-           liftRight.brake();
+           const double liftAngle = getLiftAngle();
+           if (liftSensorOK && liftAngle <= LIFT_IDLE_DOWN_MAX_ANGLE) {
+               // Keep the lift seated against the rubber bands only at bottom.
+               liftLeft.set_current_limit(LIFT_IDLE_DOWN_CURRENT_MA);
+               liftRight.set_current_limit(LIFT_IDLE_DOWN_CURRENT_MA);
+               liftLeft.move_voltage(-LIFT_IDLE_DOWN_VOLTAGE);
+               liftRight.move_voltage(-LIFT_IDLE_DOWN_VOLTAGE);
+           } else {
+               liftLeft.set_current_limit(750);
+               liftRight.set_current_limit(750);
+               liftLeft.brake();
+               liftRight.brake();
+           }
        }
 
        pros::delay(10);
