@@ -4,6 +4,7 @@
 #include "lemlib/asset.hpp"
 #include "lemlib/chassis/trackingWheel.hpp"
 #include "pros/abstract_motor.hpp"
+#include "pros/ai_vision.hpp"
 #include "pros/device.hpp"
 #include "pros/misc.h"
 #include "pros/motor_group.hpp"
@@ -26,6 +27,18 @@
 #define LIFT_TUNE_MODE 0
 
 
+// =====================================================================
+// AI VISION CLASS ID FINDER
+//   1 = autonomous() does NOTHING except read the AI Vision sensor and show
+//       every detected class id (brain screen lines 0-3, controller line 0, and
+//       the PROS terminal). Point the rear sensor at a pin, run autonomous, read
+//       the id, put it in AIV_PIN_CLASS_ID.
+//   0 = normal autonomous
+// Set back to 0 when you are done.
+// =====================================================================
+#define AIV_FIND_CLASS_MODE 0
+
+
 // controller
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
@@ -40,6 +53,9 @@ pros::Motor liftRight(12);
 pros::Motor claw(3);
 pros::Motor arm(16);
 pros::Imu imu(21);
+
+// rear facing AI Vision sensor
+pros::AIVision aivision(4);
 
 
 pros::Rotation verticalEnc(-18);
@@ -385,6 +401,293 @@ void liftTask() {
 
 
 // =====================================================================
+// AI VISION: DRIVE BACKWARD ONTO A PIN
+// =====================================================================
+//
+// Mounting convention (all "left/right" below are as seen by someone standing
+// BEHIND the robot, looking at its back):
+//   * The sensor faces backward, so image RIGHT = right from behind.
+//   * The sensor sits AIV_CAMERA_OFFSET_LEFT_IN to the left of the drivetrain
+//     centerline, so the drivetrain centerline is that far to the RIGHT of the
+//     image center. The pin therefore has to sit at image center PLUS the offset,
+//     not at the exact image center.
+//   * The offset is converted to pixels with the pin's apparent width, so it
+//     stays correct as the pin gets closer and bigger:
+//         pixelsPerInch = blobWidthPx / AIV_PIN_WIDTH_IN
+//         targetX       = imageCenter + offsetIn * pixelsPerInch
+//
+// Steering: error = pinCenterX - targetX. Pin right of target (error > 0) means
+// the back of the robot has to swing to the right-from-behind, which is the
+// robot turning clockwise from above, which is a positive "turn" below.
+// If it steers AWAY from the pin on blocks, flip AIV_STEER_SIGN to -1.
+
+// ---- hardware / identification ----
+const int    AIV_YELLOW_SIG_ID   = 1;      // color signature ID for yellow (1-7)
+const bool   AIV_SET_COLOR_IN_CODE = true; // true = this program defines the yellow signature itself
+                                           // false = use whatever the AI Vision utility saved
+const bool   AIV_USE_GAME_MODEL  = true;   // true = game element AI model, false = color signature
+const int    AIV_PIN_CLASS_ID    = 3;      // class ID of the pin in the game model (found with AIV_FIND_CLASS_MODE)
+                                           // used when AIV_USE_GAME_MODEL is true
+
+// ---- geometry ----
+const double AIV_CAMERA_OFFSET_LEFT_IN = -4.6;  // camera is this far LEFT of drivetrain center, seen from behind
+const double AIV_PIN_WIDTH_IN    = 3.0;    // TODO measure: real width of the yellow blob the sensor boxes
+const double AIV_IMAGE_WIDTH_PX  = 320.0;  // AI Vision image is 320 x 240
+const double AIV_IMAGE_CENTER_PX = AIV_IMAGE_WIDTH_PX / 2.0;
+
+// ---- target selection ----
+const double AIV_FIRST_WINDOW_PX = 120.0;  // first look: accept blobs this far from image center
+const double AIV_TRACK_WINDOW_PX = 60.0;   // after that: stay within this of where it was last seen
+const double AIV_MIN_WIDTH_PX    = 6.0;    // ignore specks narrower than this
+
+// ---- driving ----
+const double AIV_DRIVE_SPEED     = 60;     // move() units, always applied backward
+const double AIV_KP              = 0.25;   // move() units per pixel of error
+const double AIV_STEER_MAX       = 35;     // steering clamp
+const double AIV_DEADBAND_PX     = 3.0;    // no steering inside this
+const int    AIV_STEER_SIGN      = 1;      // flip to -1 if it steers away from the pin
+const double AIV_KH              = 2.0;    // heading hold gain, move() units per degree
+
+// ---- lost handling ----
+const uint32_t AIV_LOST_CONFIRM_MS = 80;   // pin must be missing this long before it counts as out of view
+
+enum class AivEnd { LOST_LIMIT, MAX_DISTANCE, TIMEOUT };
+
+// ---- speed control ----------------------------------------------------
+// aivDriveSpeed is the default backward speed (move() units, 0-127, always
+// applied backward). aivSetDriveSpeed() changes it for every later call.
+// driveBackToPin() also takes a speed for one call only.
+double aivDriveSpeed = AIV_DRIVE_SPEED;
+double aivSteerKp    = AIV_KP;
+double aivSteerMax   = AIV_STEER_MAX;
+const double AIV_DEFAULT_SPEED = -1;   // pass this (or leave the speed out) to use aivDriveSpeed
+
+void aivSetDriveSpeed(double speed) {
+    speed = std::fabs(speed);
+    if (speed > 127) speed = 127;
+    aivDriveSpeed = speed;
+}
+double aivGetDriveSpeed() { return aivDriveSpeed; }
+
+// Steering strength. kp = move() units per pixel of error, maxSteer = clamp.
+void aivSetSteering(double kp, double maxSteer) {
+    aivSteerKp = std::fabs(kp);
+    aivSteerMax = std::fabs(maxSteer);
+}
+
+// Call once from initialize().
+void aivInit() {
+    aivision.reset();
+    // The class id finder needs the AI model objects on, whatever AIV_USE_GAME_MODEL says.
+    aivision.enable_detection_types((AIV_USE_GAME_MODEL || AIV_FIND_CLASS_MODE)
+                                        ? pros::AivisionModeType::objects
+                                        : pros::AivisionModeType::colors);
+    if (!AIV_USE_GAME_MODEL && AIV_SET_COLOR_IN_CODE) {
+        // Approximate yellow. Tune hue/saturation range, or set AIV_SET_COLOR_IN_CODE false
+        // and use a signature saved from the AI Vision utility instead.
+        pros::AIVision::Color yellow = {.id = (uint8_t)AIV_YELLOW_SIG_ID,
+                                        .red = 240, .green = 200, .blue = 20,
+                                        .hue_range = 20, .saturation_range = 0.5};
+        aivision.set_color(yellow);
+    }
+}
+
+// ---- class id finder -------------------------------------------------
+// aivScanClasses() fills aivSeen with the (up to) 3 biggest AI model objects the
+// sensor sees right now, biggest first. aivSeen[0].id is the one to use for
+// AIV_PIN_CLASS_ID when a pin is the biggest thing in view.
+const int AIV_SEEN_MAX = 3;
+struct AivSeen { int id; int x; int w; int h; int score; };
+AivSeen aivSeen[AIV_SEEN_MAX];
+int aivSeenCount = 0;
+
+void aivScanClasses() {
+    auto objects = aivision.get_all_objects();
+    AivSeen found[AIV_SEEN_MAX];
+    int n = 0;
+
+    for (auto& o : objects) {
+        if (!pros::AIVision::is_type(o, pros::AivisionDetectType::object)) continue;
+
+        AivSeen s;
+        s.id    = (int)o.id;
+        s.x     = (int)o.object.element.xoffset;
+        s.w     = (int)o.object.element.width;
+        s.h     = (int)o.object.element.height;
+        s.score = (int)o.object.element.score;
+
+        // insert sorted by box area, biggest first, keep only AIV_SEEN_MAX
+        const int area = s.w * s.h;
+        int pos = n;
+        while (pos > 0 && found[pos - 1].w * found[pos - 1].h < area) pos--;
+        if (pos >= AIV_SEEN_MAX) continue;
+
+        const int last = (n < AIV_SEEN_MAX) ? n : AIV_SEEN_MAX - 1;
+        for (int i = last; i > pos; i--) found[i] = found[i - 1];
+        found[pos] = s;
+        if (n < AIV_SEEN_MAX) n++;
+    }
+
+    for (int i = 0; i < n; i++) aivSeen[i] = found[i];
+    aivSeenCount = n;
+}
+
+// Prints every detected object's class ID over the terminal. Not called automatically.
+void aivPrintClasses() {
+    auto objects = aivision.get_all_objects();
+    for (auto& o : objects) {
+        if (pros::AIVision::is_type(o, pros::AivisionDetectType::object)) {
+            printf("class id %d  x %d w %d h %d\n", (int)o.id,
+                   (int)o.object.element.xoffset, (int)o.object.element.width,
+                   (int)o.object.element.height);
+        }
+    }
+}
+
+// Finds the biggest yellow pin blob within windowPx of lastX. Returns its center x
+// and width in pixels.
+static bool aivFindPin(double lastX, double windowPx, double& centerX, double& widthPx) {
+    auto objects = aivision.get_all_objects();
+    double bestArea = 0;
+    bool found = false;
+
+    for (auto& o : objects) {
+        double x, w, h;
+
+        if (AIV_USE_GAME_MODEL) {
+            if (!pros::AIVision::is_type(o, pros::AivisionDetectType::object)) continue;
+            if ((int)o.id != AIV_PIN_CLASS_ID) continue;
+            x = o.object.element.xoffset;
+            w = o.object.element.width;
+            h = o.object.element.height;
+        } else {
+            if (!pros::AIVision::is_type(o, pros::AivisionDetectType::color)) continue;
+            if ((int)o.id != AIV_YELLOW_SIG_ID) continue;
+            x = o.object.color.xoffset;
+            w = o.object.color.width;
+            h = o.object.color.height;
+        }
+
+        if (w < AIV_MIN_WIDTH_PX) continue;
+
+        const double cx = x + w / 2.0;
+        if (std::fabs(cx - lastX) > windowPx) continue;
+
+        const double area = w * h;
+        if (area > bestArea) {
+            bestArea = area;
+            centerX = cx;
+            widthPx = w;
+            found = true;
+        }
+    }
+    return found;
+}
+
+static double aivClamp(double v, double lim) {
+    if (v > lim) return lim;
+    if (v < -lim) return -lim;
+    return v;
+}
+
+// speed: move() units 0-127, applied backward. Leave it out (or pass
+// AIV_DEFAULT_SPEED) to use the default set by aivSetDriveSpeed().
+//
+// Drives BACKWARD only, steering with the camera so the pin lines up with the
+// drivetrain centerline. Ends when whichever comes first:
+//   * the pin has been out of view for lostDistanceIn inches or lostTimeoutMs
+//     (the heading is locked on the IMU the moment it leaves view)
+//   * maxDistanceIn inches have been driven
+//   * timeoutMs has passed
+// Only the drive motors are stopped. The claw, arm and lift keep doing whatever
+// they were already doing.
+//
+// If the pin is never found, it counts as out of view from the start: heading is
+// locked immediately and it stops after lostDistanceIn / lostTimeoutMs.
+AivEnd driveBackToPin(double maxDistanceIn, int timeoutMs,
+                      double speed = AIV_DEFAULT_SPEED,
+                      double lostDistanceIn = 6.0, int lostTimeoutMs = 400) {
+    chassis.cancelAllMotions();
+
+    double driveSpeed = (speed < 0) ? aivDriveSpeed : std::fabs(speed);
+    if (driveSpeed > 127) driveSpeed = 127;
+
+    const uint32_t start = pros::millis();
+    const lemlib::Pose startPose = chassis.getPose();
+
+    double lastX = AIV_IMAGE_CENTER_PX;
+    double window = AIV_FIRST_WINDOW_PX;
+    uint32_t lastSeen = start;
+
+    bool locked = false;
+    double lockHeading = 0;
+    uint32_t lockStart = 0;
+    lemlib::Pose lockPose = startPose;
+
+    double turn = 0;
+    AivEnd result = AivEnd::TIMEOUT;
+
+    while (true) {
+        const uint32_t now = pros::millis();
+
+        if ((int)(now - start) >= timeoutMs) { result = AivEnd::TIMEOUT; break; }
+
+        const lemlib::Pose pose = chassis.getPose();
+        const double traveled = std::hypot(pose.x - startPose.x, pose.y - startPose.y);
+        if (traveled >= maxDistanceIn) { result = AivEnd::MAX_DISTANCE; break; }
+
+        if (!locked) {
+            double cx = 0, wpx = 0;
+            if (aivFindPin(lastX, window, cx, wpx)) {
+                lastSeen = now;
+                lastX = cx;
+                window = AIV_TRACK_WINDOW_PX;
+
+                const double pxPerIn = wpx / AIV_PIN_WIDTH_IN;
+                const double targetX = AIV_IMAGE_CENTER_PX + AIV_CAMERA_OFFSET_LEFT_IN * pxPerIn;
+                const double error = cx - targetX;
+
+                if (std::fabs(error) < AIV_DEADBAND_PX) turn = 0;
+                else turn = aivClamp(AIV_STEER_SIGN * aivSteerKp * error, aivSteerMax);
+            }
+            else if (now - lastSeen >= AIV_LOST_CONFIRM_MS) {
+                // Out of view. Lock the heading here and ride it out.
+                locked = true;
+                lockHeading = imu.get_rotation();
+                lockStart = now;
+                lockPose = pose;
+            }
+            // else: a frame or two missing, keep the last steering
+        }
+
+        if (locked) {
+            const double sinceLock = std::hypot(pose.x - lockPose.x, pose.y - lockPose.y);
+            if (sinceLock >= lostDistanceIn || (int)(now - lockStart) >= lostTimeoutMs) {
+                result = AivEnd::LOST_LIMIT;
+                break;
+            }
+            // IMU rotation increases clockwise, and positive turn is clockwise.
+            turn = aivClamp(AIV_KH * (lockHeading - imu.get_rotation()), aivSteerMax);
+        }
+
+        // Backward only. Steering can slow one side but never drives it forward.
+        double l = -driveSpeed + turn;
+        double r = -driveSpeed - turn;
+        if (l > 0) l = 0;
+        if (r > 0) r = 0;
+        leftMotors.move(l);
+        rightMotors.move(r);
+
+        pros::delay(10);
+    }
+
+    leftMotors.brake();
+    rightMotors.brake();
+    return result;
+}
+
+
+// =====================================================================
 
 
 void initialize() {
@@ -407,10 +710,24 @@ void initialize() {
        // X/Y are inches relative to the origin set by chassis.setPose().
        const lemlib::Pose pose = chassis.getPose();
        // Keep these readings visible in every tuning mode.
+#if AIV_FIND_CLASS_MODE
+       // Class id finder: lines 0-3 show what the AI Vision sensor sees.
+       pros::lcd::set_text(0, fmt::format("AIV objects: {}  (finder mode)", aivSeenCount));
+       for (int i = 0; i < AIV_SEEN_MAX; i++) {
+           if (i < aivSeenCount) {
+               const AivSeen s = aivSeen[i];
+               pros::lcd::set_text(1 + i, fmt::format("class id {}  x {} w {} score {}",
+                                                      s.id, s.x, s.w, s.score));
+           } else {
+               pros::lcd::set_text(1 + i, "");
+           }
+       }
+#else
        pros::lcd::set_text(0, fmt::format("X: {:.2f} in", pose.x));
        pros::lcd::set_text(1, fmt::format("Y: {:.2f} in", pose.y));
        pros::lcd::set_text(2, fmt::format("Target Angle: {:.1f} deg", liftTarget));
        pros::lcd::set_text(3, fmt::format("Motor Command: {:.1f}", liftLastOutput));
+#endif
        pros::lcd::set_text(4, fmt::format("PIDon: {}  Arm: {:.0f}",
                                        liftPIDEnabled ? 1 : 0, arm.get_position()));
        pros::lcd::set_text(5, fmt::format("Sen: {}", liftSensorOK ? "OK" : "BAD"));
@@ -433,6 +750,9 @@ void initialize() {
 
    arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    arm.tare_position();
+
+   initStage = "aivision";
+   aivInit();
 
    initStage = "imu calib";
    chassis.calibrate();
@@ -550,15 +870,65 @@ void runR2Sequence() {
 }
 
 void autonomous() {
+#if AIV_FIND_CLASS_MODE
+
+   // CLASS ID FINDER. Nothing on the robot moves. Point the rear AI Vision sensor
+   // at a pin and read the class id from any of:
+   //   * brain screen lines 0-3 (biggest object first)
+   //   * controller line 0: "Pin id: N"
+   //   * the PROS terminal (pros terminal)
+   // Put that number in AIV_PIN_CLASS_ID, then set AIV_FIND_CLASS_MODE back to 0.
+   // Try each pin color and both orientations, the model may use more than one id.
+   uint32_t lastReport = 0;
+   while (true) {
+       aivScanClasses();
+
+       const uint32_t now = pros::millis();
+       if (now - lastReport >= 300) {
+           lastReport = now;
+
+           if (aivSeenCount == 0) {
+               printf("AIV: nothing detected\n");
+               controller.print(0, 0, "AIV: none      ");
+           } else {
+               for (int i = 0; i < aivSeenCount; i++) {
+                   printf("AIV class id %d  x %d w %d h %d score %d\n",
+                          aivSeen[i].id, aivSeen[i].x, aivSeen[i].w,
+                          aivSeen[i].h, aivSeen[i].score);
+               }
+               controller.print(0, 0, "Pin id: %d n%d  ", aivSeen[0].id, aivSeenCount);
+           }
+       }
+
+       pros::delay(20);
+   }
+
+#else
+
    liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
    liftAutonomousMode = true;
    enableLiftPID();
 
+   // Arm down so the claw is at pickup height, claw spinning to take the pin in.
    moveArmAuton(-90);
-   pros::delay(2000);
-   arm.move_relative(540, 12000);
+   claw.move_voltage(12000);
+
+   // Back onto the pin, steering with the rear AI Vision sensor.
+   // Robot must start facing away from the pin, roughly lined up with it.
+   //   driveBackToPin(maxInches, timeoutMs)          uses the default speed
+   //   driveBackToPin(maxInches, timeoutMs, 40)      40 for this call only
+   //   aivSetDriveSpeed(50)                          changes the default
+   //   driveBackToPin(36, 3000, 60, 8, 500)          speed 60, lost for 8 in or 500 ms
+   aivSetDriveSpeed(60);
+   AivEnd pinEnd = driveBackToPin(10000, 10000);
+   printf("pin drive ended: %d  (0 lost, 1 max distance, 2 timeout)\n", (int)pinEnd);
+
+   // Let the claw take the pin in, then keep a light hold on it.
+   pros::delay(500);
+   claw.move_voltage(3000);
+
 
     /*
    chassis.setPose(0, 0, 180);
@@ -693,6 +1063,8 @@ setLiftTarget(90);
    pros::delay(1000);
    claw.move_voltage(0);
    */
+
+#endif
 }
 
 
