@@ -35,7 +35,7 @@ pros::MotorGroup leftMotors({-9, -8, -7}, pros::MotorGearset::green);
 pros::MotorGroup rightMotors({19, 11, 17}, pros::MotorGearset::green);
 
 
-pros::Motor liftLeft(-2);
+pros::Motor liftLeft(-1);
 pros::Motor liftRight(12);
 pros::Motor claw(3);
 pros::Motor arm(16);
@@ -136,6 +136,12 @@ struct LiftPID {
 // kD acts on degrees moved per loop, so keep the 10 ms loop while tuning.
 LiftPID liftPID(1.6, 0.0, 0.16, 10, 20);
 
+// Driver-control copy of the lift PID. Tune this one freely, autonomous keeps liftPID.
+LiftPID driverLiftPID(1.6, 0.0, 0.16, 10, 20);
+
+// Which PID the lift task is running. Autonomous = liftPID, driver = driverLiftPID.
+LiftPID* activeLiftPID = &liftPID;
+
 
 // How much of the downward command to actually use. Descending is gravity
 // assisted, so the full negative command is never needed and only makes the
@@ -185,7 +191,7 @@ bool   liftSensorOK = true;
 
 // Travel limits, in lift degrees. Measured max height was 244.37, keep margin.
 const double LIFT_MIN = 0.0;
-const double LIFT_MAX = 220.0;
+const double LIFT_MAX = 240.0;
 
 
 // Ratio between the rotation sensor and the lift arm.
@@ -301,6 +307,7 @@ void setLiftTarget(double angleDeg) {
 
 // call this right before enabling PID so it does not slam to an old target
 void enableLiftPID() {
+   activeLiftPID = &liftPID;
    double angle = getLiftAngle();
    liftTarget = angle;
    liftPID.reset(angle);
@@ -323,8 +330,8 @@ void liftTask() {
                continue;
            }
 
-           const double previousAngle = liftPID.lastAngle;
-           liftPIDNow = liftPID.update(liftTarget, currentAngle);
+           const double previousAngle = activeLiftPID->lastAngle;
+           liftPIDNow = activeLiftPID->update(liftTarget, currentAngle);
            liftFFNow = liftFF(currentAngle);
 
            double output = liftPIDNow + liftFFNow;
@@ -404,7 +411,8 @@ void initialize() {
        pros::lcd::set_text(1, fmt::format("Y: {:.2f} in", pose.y));
        pros::lcd::set_text(2, fmt::format("Target Angle: {:.1f} deg", liftTarget));
        pros::lcd::set_text(3, fmt::format("Motor Command: {:.1f}", liftLastOutput));
-       pros::lcd::set_text(4, fmt::format("PIDon: {}", liftPIDEnabled ? 1 : 0));
+       pros::lcd::set_text(4, fmt::format("PIDon: {}  Arm: {:.0f}",
+                                       liftPIDEnabled ? 1 : 0, arm.get_position()));
        pros::lcd::set_text(5, fmt::format("Sen: {}", liftSensorOK ? "OK" : "BAD"));
        pros::lcd::set_text(6, fmt::format("Lift: {:.1f} deg  Hold: {:.0f}",
                                        liftAngleNow, liftTestHold));
@@ -688,6 +696,278 @@ setLiftTarget(90);
 }
 
 
+// =====================================================================
+// DRIVER SCORING
+// =====================================================================
+
+// ---- LIFT DEGREES <-> HEIGHT -----------------------------------------
+// Measured pairs: lift angle vs height of the BOTTOM OF THE PIN in inches.
+// Both columns must be strictly increasing.
+const bool HEIGHT_TABLE_CALIBRATED = true;
+
+const int kHN = 6;
+const double kHAngle[kHN] = {0,   60,  120,  180,  220,  240};   // lift degrees
+// The first five are measured. The 240 point (33.0 in) is an EXTRAPOLATION of the
+// 180->220 slope (0.125 in/deg). Park the lift at 240, measure the bottom of the pin, and replace it.
+const double kHInch[kHN]  = {1,  7.5,   16, 25.5, 30.5, 33.0};
+
+// Seated pin-bottom height needed to score pin 1..4, in inches.
+// Each pin+cup pair adds 10 in, and a pair is scored at a time, so every pin is
+// 10 in above the previous one.
+//   neutral pin 1 = 8.77 (goal top) - 2.93 (insert depth) = 5.84
+//   alliance pin 1 = 3.25 - 2.93 = 0.32, clamped to 1.00 (lift cannot go lower)
+// Neutral pin 4 (35.84 in) is above the top of the table; it will go as high as
+// the lift can and no further. Change the 33.0 in the table above once measured.
+const double kNeutralPinIn[4]  = {5.84, 15.84, 25.84, 35.84};
+const double kAlliancePinIn[4] = {1.00, 10.32, 20.32, 30.32};
+
+double interpTable(const double* xs, const double* ys, int n, double x) {
+    if (x <= xs[0]) return ys[0];
+    if (x >= xs[n - 1]) return ys[n - 1];
+    for (int i = 0; i < n - 1; i++) {
+        if (x <= xs[i + 1]) {
+            double t = (x - xs[i]) / (xs[i + 1] - xs[i]);
+            return ys[i] + t * (ys[i + 1] - ys[i]);
+        }
+    }
+    return ys[n - 1];
+}
+
+double liftHeightFromAngle(double angleDeg) { return interpTable(kHAngle, kHInch, kHN, angleDeg); }
+double liftAngleFromHeight(double inches)   { return interpTable(kHInch, kHAngle, kHN, inches); }
+
+// ---- SEQUENCE CONSTANTS (tune these) ----------------------------------
+const double SEQ_OVER_IN  = 2.0;    // lift goes this far above the goal height
+const double SEQ_DROP_IN  = 3.0;    // then comes down this far so the pin sits in the cup
+                                    // (pin ends 1 in below table value; set 2.0 to end exactly at it)
+
+// Arm rotation quantities, in arm motor degrees, relative to where the arm is when it starts.
+const double SEQ_ARM_RAISE_ROT = 500;   // arm up before/while the lift rises
+const double SEQ_ARM_FLIP_ROT  = 900;   // total rotation from start to fully flipped to the front
+const double ARM_UP_ROT_EMPTY  = 500;   // TODO: R2, arm up about 90 degrees, no pin
+const double ARM_UP_ROT_HELD   = 500;   // TODO: L2, arm up about 90 degrees, holding a pin
+const double LIFT_SETTLE_TOL   = 3.0;   // lift degrees
+const uint32_t SEQ_RELEASE_MS  = 200;   // how long the claw spins in reverse to let go
+const uint32_t SEQ_LIFT_DELAY_MS = 350; // lift waits this long after the arm starts moving
+const uint32_t SEQ_FLIP_DELAY_MS = 150; // after the lift reaches height, wait this long before the arm flips (was hardcoded)
+const double   SEQ_FLIP_LIFT_TOL = 20.0;    // arm starts flipping once the lift is within this many degrees of its height (LIFT_SETTLE_TOL is too strict here)
+const uint32_t SEQ_RAISE_TIMEOUT_MS = 1500; // flip anyway if the lift/arm have not got there after this long (was 4000)
+const int32_t  SEQ_FLIP_VOLTAGE      = 12000; // arm voltage during the flip (full power, same as the other arm moves)
+const int32_t  SEQ_FLIP_HOLD_VOLTAGE = 4000;  // arm keeps pressing down with this once it is flipped (same as auton hold)
+const uint32_t SEQ_ARM_SETTLE_MS = 200; // after the arm reaches the flip position, wait this long before the lift lowers
+const uint32_t SEQ_PRE_RELEASE_MS = 50; // after the lift lowers, wait at least this long before the claw lets go
+
+// Reset. The arm flips back to straight up (the position it was raised to) while
+// the lift starts descending. After SEQ_RESET_ARM_BACK_DELAY_MS the arm continues
+// back to its resting position. The reset ends when the lift is down and the arm
+// has stopped; the max is only a safety net.
+const uint32_t SEQ_RESET_ARM_BACK_DELAY_MS = 500;   // arm stops at upright this long, then continues back
+const int32_t  SEQ_RESET_ARM_UP_VOLTAGE    = 12000; // arm voltage flipping back to straight up
+const int32_t  SEQ_RESET_ARM_BACK_VOLTAGE  = 6000;  // arm voltage for the final move back (was -6000)
+const uint32_t SEQ_RESET_BACK_MIN_MS = 200;   // after the arm starts going back, never finish before this
+const uint32_t SEQ_RESET_MAX_MS = 1500;       // backup timeout
+const double   SEQ_RESET_LIFT_DONE_DEG = 5.0; // lift counts as "all the way down" at or below this
+
+// Extra lift height per pin (inches), added on top of the pin height tables.
+// Zero now that the tables use the 10 in per pair spacing. Nudge a pin here if it is off.
+const double SEQ_PIN_EXTRA_IN[4] = {0.0, 0.0, 0.0, 0.0};
+
+// ---- DRIVER LIFT PID HELPERS ------------------------------------------
+void setDriverLiftTarget(double angleDeg) {
+    if (angleDeg < LIFT_MIN) angleDeg = LIFT_MIN;
+    if (angleDeg > LIFT_MAX) angleDeg = LIFT_MAX;
+    if (std::fabs(angleDeg - liftTarget) > 0.5) driverLiftPID.clearIntegral();
+    liftTarget = angleDeg;
+}
+
+// call right before using the driver PID so it does not slam to an old target
+void enableDriverLiftPID() {
+    double angle = getLiftAngle();
+    liftTarget = angle;
+    driverLiftPID.reset(angle);
+    activeLiftPID = &driverLiftPID;
+    liftLastOutput = liftFF(angle);
+    liftPIDEnabled = true;
+}
+
+bool liftSettled() {
+    return liftSensorOK && std::fabs(liftTarget - liftAngleNow) <= LIFT_SETTLE_TOL;
+}
+
+// ---- SHARED ARM STATE (global so the sequence can touch it) ------------
+int  lastArmDirection = 0;      // 1 = up push, 2 = up brake-hold, -1 = down hold, 0 = none
+bool armMoveRunning = false;    // R2 / L2 position move in progress
+double armMoveTarget = 0;
+uint32_t armMoveStart = 0;
+bool armCoast = false;
+
+void setArmBrake(bool coast) {
+    if (coast != armCoast) {
+        arm.set_brake_mode(coast ? pros::E_MOTOR_BRAKE_COAST : pros::E_MOTOR_BRAKE_HOLD);
+        armCoast = coast;
+    }
+}
+
+// ---- SCORING SEQUENCE ---------------------------------------------------
+enum SeqState { SEQ_IDLE, SEQ_ARM_UP, SEQ_RAISE, SEQ_FLIP, SEQ_LOWER, SEQ_RELEASE, SEQ_RESET };
+SeqState seqState = SEQ_IDLE;
+uint32_t seqStateStart = 0;
+double seqBaseArm = 0;
+double seqHeightIn = 0;
+bool seqArmHeld = false;
+uint32_t seqFlipArrive = 0;   // time the arm reached the flip position, 0 = not yet
+
+bool seqActive() { return seqState != SEQ_IDLE; }
+
+void seqEnter(SeqState s) {
+    seqState = s;
+    seqStateStart = pros::millis();
+}
+
+void startSequence(bool neutral, int pin) {
+    if (!HEIGHT_TABLE_CALIBRATED) {
+        controller.rumble("---");
+        return;
+    }
+    seqHeightIn = (neutral ? kNeutralPinIn[pin] : kAlliancePinIn[pin]) + SEQ_PIN_EXTRA_IN[pin];
+
+    armMoveRunning = false;
+    setArmBrake(false);
+    seqBaseArm = arm.get_position();
+    arm.move_absolute(seqBaseArm + SEQ_ARM_RAISE_ROT, 200);
+    seqArmHeld = false;
+
+    // The lift does NOT move yet. Hold it still until the arm is up.
+    liftPIDEnabled = false;
+    liftLeft.brake();
+    liftRight.brake();
+
+    seqEnter(SEQ_ARM_UP);
+}
+
+void cancelSequence() {
+    seqState = SEQ_IDLE;
+    liftPIDEnabled = false;
+    liftLeft.brake();
+    liftRight.brake();
+    arm.brake();
+    lastArmDirection = 0;
+}
+
+void updateSequence() {
+    const uint32_t t = pros::millis() - seqStateStart;
+
+    switch (seqState) {
+    case SEQ_ARM_UP: {
+        // Arm is moving up. Lift stays put for SEQ_LIFT_DELAY_MS so the arm is
+        // well clear before the lift starts rising.
+        if (!seqArmHeld && arm.get_position() >= seqBaseArm + SEQ_ARM_RAISE_ROT - 5.0) {
+            arm.brake();
+            seqArmHeld = true;
+        }
+        if (t >= SEQ_LIFT_DELAY_MS) {
+            enableDriverLiftPID();
+            setDriverLiftTarget(liftAngleFromHeight(seqHeightIn + SEQ_OVER_IN));
+            seqEnter(SEQ_RAISE);
+        }
+        break;
+    }
+    case SEQ_RAISE: {
+        // Lift is rising. Arm brakes at its raised position if it has not already.
+        if (!seqArmHeld && arm.get_position() >= seqBaseArm + SEQ_ARM_RAISE_ROT - 5.0) {
+            arm.brake();
+            seqArmHeld = true;
+        }
+        // Flip as soon as the lift is CLOSE to height. Waiting for it to fully
+        // settle (3 deg) is what caused the long pause, the last few degrees creep.
+        const bool liftClose = liftSensorOK &&
+                               std::fabs(liftTarget - liftAngleNow) <= SEQ_FLIP_LIFT_TOL;
+        if ((seqArmHeld && t >= SEQ_FLIP_DELAY_MS && liftClose) || t >= SEQ_RAISE_TIMEOUT_MS) {
+            arm.move_voltage(SEQ_FLIP_VOLTAGE);
+            seqFlipArrive = 0;
+            seqEnter(SEQ_FLIP);
+        }
+        break;
+    }
+    case SEQ_FLIP: {
+        // Full voltage the whole way, then a steady press-down hold. move_absolute
+        // slows down and gives up short of the end under load, this does not.
+        // Counts as arrived when the arm reaches the target, OR when it stops moving
+        // (it has hit its end stop), so a too-big SEQ_ARM_FLIP_ROT cannot stall it.
+        const double flipTarget = seqBaseArm + SEQ_ARM_FLIP_ROT;
+        arm.move_voltage(seqFlipArrive == 0 ? SEQ_FLIP_VOLTAGE : SEQ_FLIP_HOLD_VOLTAGE);
+
+        const bool atTarget = arm.get_position() >= flipTarget - 5.0;
+        const bool stalled  = t >= 300 && std::fabs(arm.get_actual_velocity()) < 5.0;
+        if ((atTarget || stalled) && seqFlipArrive == 0) {
+            seqFlipArrive = pros::millis();
+            arm.move_voltage(SEQ_FLIP_HOLD_VOLTAGE);
+        }
+        const bool armSettled = seqFlipArrive != 0 &&
+                                pros::millis() - seqFlipArrive >= SEQ_ARM_SETTLE_MS;
+        if (armSettled || t >= 3000) {
+            seqFlipArrive = 0;
+            arm.move_voltage(SEQ_FLIP_HOLD_VOLTAGE);   // keep pressing down through lower + release
+            // come down 3 inches from the raised height
+            setDriverLiftTarget(liftAngleFromHeight(seqHeightIn + SEQ_OVER_IN - SEQ_DROP_IN));
+            seqEnter(SEQ_LOWER);
+        }
+        break;
+    }
+    case SEQ_LOWER:
+        if ((t >= SEQ_PRE_RELEASE_MS && liftSettled()) || t >= 2500) seqEnter(SEQ_RELEASE);
+        break;
+
+    case SEQ_RELEASE:
+        // claw reverse is applied in the claw section of opcontrol
+        if (t >= SEQ_RELEASE_MS) {
+            // start the reset: lift down and arm back to upright, driven in SEQ_RESET
+            liftPIDEnabled = false;
+            liftLeft.set_current_limit(2500);
+            liftRight.set_current_limit(2500);
+            seqEnter(SEQ_RESET);
+        }
+        break;
+
+    case SEQ_RESET: {
+        // Lift starts going down immediately.
+        liftLeft.move_voltage(-8000);
+        liftRight.move_voltage(-8000);
+
+        // Arm first flips back to straight up (where it was raised to) while the
+        // lift descends. After SEQ_RESET_ARM_BACK_DELAY_MS it continues back.
+        const bool armBackPhase = t >= SEQ_RESET_ARM_BACK_DELAY_MS;
+        if (!armBackPhase) {
+            const double upright = seqBaseArm + SEQ_ARM_RAISE_ROT;
+            if (arm.get_position() > upright + 5.0) arm.move_voltage(-SEQ_RESET_ARM_UP_VOLTAGE);
+            else arm.brake();
+        }
+        else {
+            arm.move_voltage(-SEQ_RESET_ARM_BACK_VOLTAGE);
+        }
+
+        // PID is off during the reset, so the lift task is not updating the angle.
+        getLiftAngle();
+        const bool liftDown   = liftSensorOK && liftAngleNow <= SEQ_RESET_LIFT_DONE_DEG;
+        const bool armStopped = std::fabs(arm.get_actual_velocity()) < 5.0;
+        const bool backLongEnough = t >= SEQ_RESET_ARM_BACK_DELAY_MS + SEQ_RESET_BACK_MIN_MS;
+
+        if ((backLongEnough && liftDown && armStopped) || t >= SEQ_RESET_MAX_MS) {
+            liftLeft.brake();
+            liftRight.brake();
+            arm.brake();
+            lastArmDirection = -1;   // arm is down, so the claw can pull a pin without drag
+            seqState = SEQ_IDLE;     // claw resumes idle spin immediately
+        }
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+
+
 // Turns the LIFT_TUNE_MODE number into text so it can be shown on the screen.
 // Proves which mode actually compiled in, rather than which one you edited.
 #define LIFT_STR2(x) #x
@@ -874,26 +1154,31 @@ void opcontrol() {
 #else
 
     // MODE 0: Normal driver control
+    //
+    // Shifters:   DOWN = neutral goals,  hold B = alliance goals
+    //   shifter + L1/R1/L2/R2 = pin 1/2/3/4 scoring sequence
+    // No shifter: claw idle 25%, R1 claw full + arm downforce (coast on release),
+    //   L1 claw reverse, R2 arm up (empty), L2 arm up (holding pin)
+    // X / A manual arm, UP / LEFT arrows manual lift.
+    // X, A, UP or LEFT cancels a running sequence.
 
     liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-
-    // Prevent the arm from coasting after R2.
     arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    armCoast = false;
 
-    liftLeft.move_voltage(0);
-    liftRight.move_voltage(0);
+    // Carry the lift over from autonomous. The rotation sensor is only zeroed in
+    // initialize(), so whatever height autonomous left the lift at is still the
+    // reading here. Do NOT cut the motors to 0 V (the lift would let go), brake so
+    // it holds that height, drop the auton PID, and sync the target to where it is.
+    liftPIDEnabled = false;
+    getLiftAngle();
+    liftTarget = liftAngleNow;
+    liftLeft.brake();
+    liftRight.brake();
 
-    const int32_t LIFT_DRIVER_VOLTAGE = 12000;
-
-    int lastArmDirection = 0;
-
-    bool r2TaskRunning = false;
-    uint32_t r2TaskStart = 0;
-
-    bool arm540Running = false;
-    double arm540Target = 0;
-    uint32_t arm540StartTime = 0;
+    seqState = SEQ_IDLE;
+    bool r1Prev = false;
 
     while (true) {
 
@@ -907,188 +1192,151 @@ void opcontrol() {
         );
 
         // ==========================================
-        // R2 RESET
+        // INPUTS (new_press polled every loop so no stale presses build up)
         // ==========================================
 
-        // R2 is allowed to start regardless of arm540Running.
-        if (controller.get_digital_new_press(
-                pros::E_CONTROLLER_DIGITAL_R2)
-            && !r2TaskRunning) {
+        const bool l1New = controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L1);
+        const bool r1New = controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1);
+        const bool l2New = controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L2);
+        const bool r2New = controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2);
 
-            r2TaskRunning = true;
-            r2TaskStart = pros::millis();
+        const bool neutralShift  = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
+        const bool allianceShift = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
+        const bool shifter = neutralShift || allianceShift;
 
-            // Cancel any active arm position movement.
-            arm540Running = false;
+        const bool xHeld    = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
+        const bool aHeld    = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
+        const bool upHeld   = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
+        const bool leftHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT);
+        const bool r1Held   = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
+        const bool l1Held   = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
 
-            lastArmDirection = 0;
+        // ==========================================
+        // SCORING SEQUENCE START / UPDATE / CANCEL
+        // ==========================================
 
-            // Immediately start moving downward.
-            arm.move_voltage(-6000);
+        if (seqActive()) {
+            if (xHeld || aHeld || upHeld || leftHeld) cancelSequence();
+            else updateSequence();
+        }
+        else if (shifter) {
+            int pin = -1;
+            if (l1New) pin = 0;
+            else if (r1New) pin = 1;
+            else if (l2New) pin = 2;
+            else if (r2New) pin = 3;
+            if (pin >= 0) startSequence(neutralShift, pin);
         }
 
         // ==========================================
         // CLAW
         // ==========================================
 
-        int clawCommand = 0;
-
-        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B)) {
-            clawCommand = 12000;
+        if (seqState == SEQ_RELEASE) {
+            claw.move_voltage(-12000);
         }
-        else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)) {
-            clawCommand = -12000;
+        else if (seqState == SEQ_RESET) {
+            claw.brake();                       // resumes only once everything is down
         }
-
-        if (clawCommand != 0) {
-            claw.move_voltage(clawCommand);
+        else if (seqActive() || shifter) {
+            claw.move_voltage(3000);
+        }
+        else if (r1Held) {
+            claw.move_voltage(12000);
+        }
+        else if (l1Held) {
+            claw.move_voltage(-12000);
         }
         else {
             claw.move_voltage(3000);
         }
 
         // ==========================================
-        // ARM AND RESET SEQUENCING
+        // ARM AND LIFT (only when the sequence is not driving them)
         // ==========================================
 
-        if (r2TaskRunning) {
+        if (!seqActive()) {
 
-            // Continue resetting downward.
-            liftLeft.set_current_limit(2500);
-            liftRight.set_current_limit(2500);
-
-            liftLeft.move_voltage(-8000);
-            liftRight.move_voltage(-8000);
-
-            arm.move_voltage(-6000);
-
-            if (pros::millis() - r2TaskStart >= 2000) {
-
-                // Finish reset and actively brake.
-                liftLeft.brake();
-                liftRight.brake();
-                arm.brake();
-
-                r2TaskRunning = false;
-
-                // Reset the arm cycle.
-                arm540Running = false;
+            // --- R2 / L2 arm position moves (not while a shifter is held) ---
+            if (!shifter && (r2New || l2New)) {
+                setArmBrake(false);
+                armMoveTarget = arm.get_position() + (r2New ? ARM_UP_ROT_EMPTY : ARM_UP_ROT_HELD);
+                armMoveStart = pros::millis();
                 lastArmDirection = 0;
-            }
-        }
-
-        else {
-
-            // --------------------------------------
-            // INITIAL R1 MOVEMENT
-            // --------------------------------------
-
-            if (controller.get_digital_new_press(
-                    pros::E_CONTROLLER_DIGITAL_R1)
-                && !arm540Running) {
-
-                arm540Target = arm.get_position() + 400.0;
-                arm540StartTime = pros::millis();
-
-                lastArmDirection = 0;
-
-                int result = arm.move_absolute(
-                    arm540Target,
-                    200
-                );
-
-                arm540Running = (result == 1);
+                armMoveRunning = (arm.move_absolute(armMoveTarget, 200) == 1);
             }
 
-            // --------------------------------------
-            // MONITOR INITIAL MOVEMENT
-            // --------------------------------------
-
-            if (arm540Running) {
-
-                double error =
-                    arm540Target - arm.get_position();
-
-                if (std::fabs(error) <= 5.0) {
-
-                    arm540Running = false;
-
-                    lastArmDirection = 1;
-
-                    arm.move_voltage(2500);
+            if (armMoveRunning) {
+                if (xHeld || aHeld) {
+                    armMoveRunning = false;      // manual override
                 }
-                else if (pros::millis() - arm540StartTime >= 4000) {
-
-                    arm540Running = false;
-
+                else if (arm.get_position() >= armMoveTarget - 5.0) {
+                    // Reached (or passed) the target. Stop and brake-hold right here.
+                    // No voltage push, that is what kept it drifting past the target.
+                    armMoveRunning = false;
+                    lastArmDirection = 2;      // 2 = up, held by brake
+                    setArmBrake(false);        // make sure brake mode is HOLD
+                    arm.brake();
+                }
+                else if (pros::millis() - armMoveStart >= 4000) {
+                    armMoveRunning = false;
                     lastArmDirection = 0;
-
                     arm.brake();
                 }
             }
 
-            // --------------------------------------
-            // NORMAL ARM CONTROL
-            // --------------------------------------
-
-            if (!arm540Running) {
-
-                if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
-
+            // --- manual arm ---
+            if (!armMoveRunning) {
+                if (xHeld) {
+                    setArmBrake(false);
                     arm.move_voltage(12000);
                     lastArmDirection = 1;
                 }
-                else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
-
+                else if (aHeld) {
+                    setArmBrake(false);
                     arm.move_voltage(-12000);
                     lastArmDirection = -1;
                 }
-                else {
-
-                    if (lastArmDirection == 1) {
-                        arm.move_voltage(2500);
-                    }
-                    else if (lastArmDirection == -1) {
-                        arm.move_voltage(-3000);
-                    }
-                    else {
-                        arm.brake();
-                    }
+                else if (!shifter && r1Held) {
+                    // Claw is intaking. Arm up -> keep holding it up.
+                    // Anything else (down or unknown) -> press it down.
+                    setArmBrake(false);
+                    if (lastArmDirection == 1) arm.move_voltage(2500);
+                    else if (lastArmDirection == 2) arm.brake();   // R2/L2 moved it up, keep it held
+                    else arm.move_voltage(-3000);   // raise toward -4000/-5000 if too weak
                 }
+                else if (r1Prev && !r1Held) {
+                    // R1 let go: coast so the pin does not drag
+                    setArmBrake(true);
+                    arm.move_voltage(0);
+                    lastArmDirection = 0;
+                }
+                else {
+                    if (lastArmDirection == 1) arm.move_voltage(2500);
+                    else if (lastArmDirection == -1) arm.move_voltage(-3000);
+                    else arm.brake();       // coasts if R1 put the arm in coast
+                }
+            }
+
+            // --- manual lift: UP / LEFT arrows ---
+            liftPIDEnabled = false;
+            liftLeft.set_current_limit(2500);
+            liftRight.set_current_limit(2500);
+            if (upHeld) {
+                liftLeft.move_voltage(12000);
+                liftRight.move_voltage(12000);
+            }
+            else if (leftHeld) {
+                liftLeft.move_voltage(-8000);
+                liftRight.move_voltage(-8000);
+            }
+            else {
+                liftLeft.brake();
+                liftRight.brake();
             }
         }
 
-        // ==========================================
-        // MANUAL LIFT
-        // ==========================================
-
-        if (r2TaskRunning) {
-            // R2 already controls the lift.
-        }
-        else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
-
-            liftLeft.set_current_limit(2500);
-            liftRight.set_current_limit(2500);
-
-            liftLeft.move_voltage(LIFT_DRIVER_VOLTAGE);
-            liftRight.move_voltage(LIFT_DRIVER_VOLTAGE);
-        }
-        else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2)) {
-
-            liftLeft.set_current_limit(2500);
-            liftRight.set_current_limit(2500);
-
-            liftLeft.move_voltage(-8000);
-            liftRight.move_voltage(-8000);
-        }
-        else {
-
-            liftLeft.set_current_limit(2500);
-            liftRight.set_current_limit(2500);
-
-            liftLeft.brake();
-            liftRight.brake();
-        }
+        r1Prev = r1Held && !shifter;
 
         pros::delay(10);
     }
