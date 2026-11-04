@@ -28,11 +28,12 @@
 
 
 // =====================================================================
-// AI VISION CLASS ID FINDER
+// AI VISION YELLOW FINDER
 //   1 = autonomous() does NOTHING except read the AI Vision sensor and show
-//       every detected class id (brain screen lines 0-3, controller line 0, and
-//       the PROS terminal). Point the rear sensor at a pin, run autonomous, read
-//       the id, put it in AIV_PIN_CLASS_ID.
+//       the yellow blobs it sees (brain screen lines 0-4, controller line 0, and
+//       the PROS terminal). Point the rear sensor at a pin, run autonomous, and
+//       check that the pin is boxed steadily. If it is not, tune the AIV_YELLOW_*
+//       numbers below.
 //   0 = normal autonomous
 // Set back to 0 when you are done.
 // =====================================================================
@@ -55,7 +56,7 @@ pros::Motor arm(16);
 pros::Imu imu(21);
 
 // rear facing AI Vision sensor
-pros::AIVision aivision(4);
+pros::AIVision aivision(14);
 
 
 pros::Rotation verticalEnc(-18);
@@ -401,8 +402,12 @@ void liftTask() {
 
 
 // =====================================================================
-// AI VISION: DRIVE BACKWARD ONTO A PIN
+// AI VISION: DRIVE BACKWARD ONTO A PIN (YELLOW COLOR TRACKING)
 // =====================================================================
+//
+// The pin is found by color, not by the AI game model. The sensor boxes every
+// blob that matches the yellow signature defined below, and the biggest blob
+// near where the pin was last seen is treated as the pin.
 //
 // Mounting convention (all "left/right" below are as seen by someone standing
 // BEHIND the robot, looking at its back):
@@ -686,9 +691,7 @@ AivEnd driveBackToPin(double maxDistanceIn, int timeoutMs,
     return result;
 }
 
-
 // =====================================================================
-
 
 void initialize() {
    // ORDER MATTERS HERE, and the old order is why the controller text stopped.
@@ -759,7 +762,6 @@ void initialize() {
 
    initStage = "done";
 }
-
 
 void disabled() {}
 void competition_initialize() {}
@@ -872,31 +874,37 @@ void runR2Sequence() {
 void autonomous() {
 #if AIV_FIND_CLASS_MODE
 
-   // CLASS ID FINDER. Nothing on the robot moves. Point the rear AI Vision sensor
-   // at a pin and read the class id from any of:
-   //   * brain screen lines 0-3 (biggest object first)
-   //   * controller line 0: "Pin id: N"
+   // YELLOW FINDER. Nothing on the robot moves. Point the rear AI Vision sensor
+   // at a pin and watch it from any of:
+   //   * brain screen lines 0-4 (biggest yellow blob first, line 4 is what
+   //     driveBackToPin() would lock onto)
+   //   * controller line 0: "Yel n<count> w<width>"
    //   * the PROS terminal (pros terminal)
-   // Put that number in AIV_PIN_CLASS_ID, then set AIV_FIND_CLASS_MODE back to 0.
-   // Try each pin color and both orientations, the model may use more than one id.
+   // The pin should be boxed steadily. If it flickers or is missed, tune the
+   // AIV_YELLOW_* numbers. If other yellow things get boxed, narrow them.
+   // Then set AIV_FIND_CLASS_MODE back to 0.
    uint32_t lastReport = 0;
    while (true) {
        aivScanClasses();
+
+       // Same lookup driveBackToPin() uses, wide open, so screen line 4 shows
+       // whether the drive code would find the pin and where.
+       double pcx = 0, pw = 0;
+       aivFindPin(AIV_IMAGE_CENTER_PX, 1000.0, pcx, pw);
 
        const uint32_t now = pros::millis();
        if (now - lastReport >= 300) {
            lastReport = now;
 
            if (aivSeenCount == 0) {
-               printf("AIV: nothing detected\n");
-               controller.print(0, 0, "AIV: none      ");
+               printf("AIV: no yellow detected\n");
+               controller.print(0, 0, "Yel: none      ");
            } else {
                for (int i = 0; i < aivSeenCount; i++) {
-                   printf("AIV class id %d  x %d w %d h %d score %d\n",
-                          aivSeen[i].id, aivSeen[i].x, aivSeen[i].w,
-                          aivSeen[i].h, aivSeen[i].score);
+                   printf("AIV yellow  x %d w %d h %d\n",
+                          aivSeen[i].x, aivSeen[i].w, aivSeen[i].h);
                }
-               controller.print(0, 0, "Pin id: %d n%d  ", aivSeen[0].id, aivSeenCount);
+               controller.print(0, 0, "Yel n%d w%d    ", aivSeenCount, aivSeen[0].w);
            }
        }
 
@@ -910,30 +918,10 @@ void autonomous() {
 
    liftAutonomousMode = true;
    enableLiftPID();
-
+/*
    // Arm down so the claw is at pickup height, claw spinning to take the pin in.
-   moveArmAuton(-90);
-   claw.move_voltage(12000);
-
-   // Back onto the pin, steering with the rear AI Vision sensor.
-   // Robot must start facing away from the pin, roughly lined up with it.
-   //   driveBackToPin(maxInches, timeoutMs)          uses the default speed
-   //   driveBackToPin(maxInches, timeoutMs, 40)      40 for this call only
-   //   aivSetDriveSpeed(50)                          changes the default
-   //   driveBackToPin(36, 3000, 60, 8, 500)          speed 60, lost for 8 in or 500 ms
-   aivSetDriveSpeed(60);
-   AivEnd pinEnd = driveBackToPin(10000, 10000);
-   printf("pin drive ended: %d  (0 lost, 1 max distance, 2 timeout)\n", (int)pinEnd);
-
-   // Let the claw take the pin in, then keep a light hold on it.
-   pros::delay(500);
-   claw.move_voltage(3000);
-
-
-    /*
    chassis.setPose(0, 0, 180);
-   
-   
+
    claw.move_voltage(12000);
 
    // Toggle roller while the claw runs.
@@ -952,8 +940,11 @@ void autonomous() {
    chassis.moveToPoint(5, 18, 1000, {.maxSpeed = 60});
    
    chassis.turnToHeading(225, 1000);
-    chassis.moveToPoint(31, 41, 3000, {.forwards=false, .maxSpeed = 50});
-    chassis.turnToHeading(180, 500);
+   chassis.waitUntilDone();
+   aivSetDriveSpeed(50);
+AivEnd pinEnd = driveBackToPin(1000, 10000, 50, 12, 2000);
+pros::delay(500);
+   chassis.turnToHeading(180, 500);
     moveArmAuton(90);
     setLiftTarget(60);
     chassis.moveToPoint(26, 24, 1000, {.maxSpeed = 60});
@@ -962,12 +953,17 @@ void autonomous() {
     pros::delay(750);
     claw.move_voltage(-12000);
     pros::delay(500);
+    */
+    chassis.setPose(26,24,180);
     chassis.moveToPoint(24, 35, 3000, {.forwards=false, .maxSpeed = 50});
     chassis.waitUntil(3);
     claw.move_voltage(12000);
     moveArmAuton(-90);
-    chassis.turnToHeading(315, 500);
-    chassis.moveToPoint(57, 9, 5000, {.forwards=false, .maxSpeed = 50});
+    chassis.turnToHeading(315, 1000);
+    chassis.waitUntilDone();
+   aivSetDriveSpeed(50);
+    AivEnd pinEnd2 = driveBackToPin(1000, 10000, 50, 18, 3000);
+    pros::delay(500);
     chassis.turnToHeading(-90, 500);
     moveArmAuton(90);
     setLiftTarget(100);
@@ -977,7 +973,7 @@ void autonomous() {
     pros::delay(500);
     claw.move_voltage(-12000);
     pros::delay(1000);
-*/
+
    //standalone skills
 
    //return to loader
@@ -1091,7 +1087,7 @@ const double kHInch[kHN]  = {1,  7.5,   16, 25.5, 30.5, 33.0};
 // Neutral pin 4 (35.84 in) is above the top of the table; it will go as high as
 // the lift can and no further. Change the 33.0 in the table above once measured.
 const double kNeutralPinIn[4]  = {5.84, 15.84, 25.84, 35.84};
-const double kAlliancePinIn[4] = {1.00, 10.32, 20.32, 30.32};
+const double kAlliancePinIn[4] = {1.00, 10.32, 17.32, 27.32};
 
 double interpTable(const double* xs, const double* ys, int n, double x) {
     if (x <= xs[0]) return ys[0];
@@ -1109,9 +1105,23 @@ double liftHeightFromAngle(double angleDeg) { return interpTable(kHAngle, kHInch
 double liftAngleFromHeight(double inches)   { return interpTable(kHInch, kHAngle, kHN, inches); }
 
 // ---- SEQUENCE CONSTANTS (tune these) ----------------------------------
-const double SEQ_OVER_IN  = 2.0;    // lift goes this far above the goal height
-const double SEQ_DROP_IN  = 3.0;    // then comes down this far so the pin sits in the cup
+const double SEQ_OVER_IN  = 1.0;    // lift goes this far above the goal height
+const double SEQ_DROP_IN  = 5.0;    // then comes down this far so the pin sits in the cup
                                     // (pin ends 1 in below table value; set 2.0 to end exactly at it)
+
+// Alliance goal, first pin only: do NOT move the lift, just flip the arm (raise the
+// arm, flip it to the front, release the claw, reset the arm). Set false to put the
+// lift back into that sequence.
+const bool ALLIANCE_PIN1_ARM_ONLY = true;
+
+// Every scoring sequence (neutral and alliance, all 4 pins): after the claw releases the
+// pin, drive straight BACKWARD this many inches, then start the reset. Set SEQ_BACKUP_IN
+// to 0 to turn it off.
+// The sequence drives the wheels itself during this, the joysticks are ignored until it ends.
+const double   SEQ_BACKUP_IN         = 1.0;   // inches to drive backward after the release
+const double   SEQ_BACKUP_SPEED      = 20;    // move() units, always applied backward
+const double   SEQ_BACKUP_KH         = 2.0;   // heading hold gain, move() units per degree
+const uint32_t SEQ_BACKUP_TIMEOUT_MS = 800;   // safety net: stop backing up after this long either way
 
 // Arm rotation quantities, in arm motor degrees, relative to where the arm is when it starts.
 const double SEQ_ARM_RAISE_ROT = 500;   // arm up before/while the lift rises
@@ -1119,7 +1129,7 @@ const double SEQ_ARM_FLIP_ROT  = 900;   // total rotation from start to fully fl
 const double ARM_UP_ROT_EMPTY  = 500;   // TODO: R2, arm up about 90 degrees, no pin
 const double ARM_UP_ROT_HELD   = 500;   // TODO: L2, arm up about 90 degrees, holding a pin
 const double LIFT_SETTLE_TOL   = 3.0;   // lift degrees
-const uint32_t SEQ_RELEASE_MS  = 200;   // how long the claw spins in reverse to let go
+const uint32_t SEQ_RELEASE_MS  = 600;   // how long the claw spins in reverse to let go
 const uint32_t SEQ_LIFT_DELAY_MS = 350; // lift waits this long after the arm starts moving
 const uint32_t SEQ_FLIP_DELAY_MS = 150; // after the lift reaches height, wait this long before the arm flips (was hardcoded)
 const double   SEQ_FLIP_LIFT_TOL = 20.0;    // arm starts flipping once the lift is within this many degrees of its height (LIFT_SETTLE_TOL is too strict here)
@@ -1181,13 +1191,17 @@ void setArmBrake(bool coast) {
 }
 
 // ---- SCORING SEQUENCE ---------------------------------------------------
-enum SeqState { SEQ_IDLE, SEQ_ARM_UP, SEQ_RAISE, SEQ_FLIP, SEQ_LOWER, SEQ_RELEASE, SEQ_RESET };
+enum SeqState { SEQ_IDLE, SEQ_ARM_UP, SEQ_RAISE, SEQ_FLIP, SEQ_LOWER, SEQ_RELEASE, SEQ_BACKUP, SEQ_RESET };
 SeqState seqState = SEQ_IDLE;
 uint32_t seqStateStart = 0;
 double seqBaseArm = 0;
 double seqHeightIn = 0;
 bool seqArmHeld = false;
+bool seqNoLift = false;       // true = this run only flips the arm, the lift is never moved
 uint32_t seqFlipArrive = 0;   // time the arm reached the flip position, 0 = not yet
+bool seqDoBackup = false;     // true = drive backward SEQ_BACKUP_IN inches after the release (every pin)
+lemlib::Pose seqBackupStart(0, 0, 0);   // pose when the backup began
+double seqBackupHeading = 0;            // IMU heading held during the backup
 
 bool seqActive() { return seqState != SEQ_IDLE; }
 
@@ -1202,6 +1216,12 @@ void startSequence(bool neutral, int pin) {
         return;
     }
     seqHeightIn = (neutral ? kNeutralPinIn[pin] : kAlliancePinIn[pin]) + SEQ_PIN_EXTRA_IN[pin];
+
+    // Alliance goal, first pin: arm only, the lift stays where it is.
+    seqNoLift = ALLIANCE_PIN1_ARM_ONLY && !neutral && pin == 0;
+
+    // Every pin, neutral and alliance: back up SEQ_BACKUP_IN inches after the release.
+    seqDoBackup = SEQ_BACKUP_IN > 0;
 
     armMoveRunning = false;
     setArmBrake(false);
@@ -1226,6 +1246,14 @@ void cancelSequence() {
     lastArmDirection = 0;
 }
 
+// Starts the reset: lift down and arm back to upright, driven in SEQ_RESET.
+void seqBeginReset() {
+    liftPIDEnabled = false;
+    liftLeft.set_current_limit(2500);
+    liftRight.set_current_limit(2500);
+    seqEnter(SEQ_RESET);
+}
+
 void updateSequence() {
     const uint32_t t = pros::millis() - seqStateStart;
 
@@ -1237,6 +1265,18 @@ void updateSequence() {
             arm.brake();
             seqArmHeld = true;
         }
+
+        if (seqNoLift) {
+            // No lift to wait for. Flip as soon as the arm is up (or the same
+            // safety timeout as the normal sequence).
+            if ((seqArmHeld && t >= SEQ_FLIP_DELAY_MS) || t >= SEQ_RAISE_TIMEOUT_MS) {
+                arm.move_voltage(SEQ_FLIP_VOLTAGE);
+                seqFlipArrive = 0;
+                seqEnter(SEQ_FLIP);
+            }
+            break;
+        }
+
         if (t >= SEQ_LIFT_DELAY_MS) {
             enableDriverLiftPID();
             setDriverLiftTarget(liftAngleFromHeight(seqHeightIn + SEQ_OVER_IN));
@@ -1280,9 +1320,15 @@ void updateSequence() {
         if (armSettled || t >= 3000) {
             seqFlipArrive = 0;
             arm.move_voltage(SEQ_FLIP_HOLD_VOLTAGE);   // keep pressing down through lower + release
-            // come down 3 inches from the raised height
-            setDriverLiftTarget(liftAngleFromHeight(seqHeightIn + SEQ_OVER_IN - SEQ_DROP_IN));
-            seqEnter(SEQ_LOWER);
+            if (seqNoLift) {
+                // Arm only: nothing to lower, go straight to the release.
+                seqEnter(SEQ_RELEASE);
+            }
+            else {
+                // come down 3 inches from the raised height
+                setDriverLiftTarget(liftAngleFromHeight(seqHeightIn + SEQ_OVER_IN - SEQ_DROP_IN));
+                seqEnter(SEQ_LOWER);
+            }
         }
         break;
     }
@@ -1293,18 +1339,55 @@ void updateSequence() {
     case SEQ_RELEASE:
         // claw reverse is applied in the claw section of opcontrol
         if (t >= SEQ_RELEASE_MS) {
-            // start the reset: lift down and arm back to upright, driven in SEQ_RESET
-            liftPIDEnabled = false;
-            liftLeft.set_current_limit(2500);
-            liftRight.set_current_limit(2500);
-            seqEnter(SEQ_RESET);
+            if (seqDoBackup) {
+                // Drive back first, the reset starts when that ends.
+                seqBackupStart = chassis.getPose();
+                seqBackupHeading = imu.get_rotation();
+                seqEnter(SEQ_BACKUP);
+            }
+            else {
+                seqBeginReset();
+            }
         }
         break;
 
+    case SEQ_BACKUP: {
+        // The sequence drives the wheels here, opcontrol skips the joysticks.
+        // The claw keeps spinning in reverse (see the claw section) so the pin
+        // stays released while the robot pulls away.
+        const lemlib::Pose p = chassis.getPose();
+        const double moved = std::hypot(p.x - seqBackupStart.x, p.y - seqBackupStart.y);
+
+        if (moved >= SEQ_BACKUP_IN || t >= SEQ_BACKUP_TIMEOUT_MS) {
+            leftMotors.brake();
+            rightMotors.brake();
+            seqBeginReset();
+            break;
+        }
+
+        // Hold the heading so it backs out straight. IMU rotation increases
+        // clockwise and positive turn is clockwise.
+        double turn = SEQ_BACKUP_KH * (seqBackupHeading - imu.get_rotation());
+        if (turn > 20) turn = 20;
+        if (turn < -20) turn = -20;
+
+        // Backward only. Steering can slow one side but never drives it forward.
+        double l = -SEQ_BACKUP_SPEED + turn;
+        double r = -SEQ_BACKUP_SPEED - turn;
+        if (l > 0) l = 0;
+        if (r > 0) r = 0;
+        leftMotors.move(l);
+        rightMotors.move(r);
+        break;
+    }
+
     case SEQ_RESET: {
-        // Lift starts going down immediately.
-        liftLeft.move_voltage(-8000);
-        liftRight.move_voltage(-8000);
+        // Lift starts going down immediately (skipped on an arm-only run, the lift
+        // never left the bottom).
+        if (!seqNoLift) {
+            liftLeft.move_voltage(-8000);
+            liftRight.move_voltage(-8000);
+        }
 
         // Arm first flips back to straight up (where it was raised to) while the
         // lift descends. After SEQ_RESET_ARM_BACK_DELAY_MS it continues back.
@@ -1320,7 +1403,7 @@ void updateSequence() {
 
         // PID is off during the reset, so the lift task is not updating the angle.
         getLiftAngle();
-        const bool liftDown   = liftSensorOK && liftAngleNow <= SEQ_RESET_LIFT_DONE_DEG;
+        const bool liftDown   = seqNoLift || (liftSensorOK && liftAngleNow <= SEQ_RESET_LIFT_DONE_DEG);
         const bool armStopped = std::fabs(arm.get_actual_velocity()) < 5.0;
         const bool backLongEnough = t >= SEQ_RESET_ARM_BACK_DELAY_MS + SEQ_RESET_BACK_MIN_MS;
 
@@ -1558,10 +1641,13 @@ void opcontrol() {
         // DRIVE
         // ==========================================
 
-        chassis.tank(
-            controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
-            controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y)
-        );
+        // During the backup after a release the sequence drives the wheels itself.
+        if (seqState != SEQ_BACKUP) {
+            chassis.tank(
+                controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
+                controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y)
+            );
+        }
 
         // ==========================================
         // INPUTS (new_press polled every loop so no stale presses build up)
@@ -1593,10 +1679,10 @@ void opcontrol() {
         }
         else if (shifter) {
             int pin = -1;
-            if (l1New) pin = 0;
-            else if (r1New) pin = 1;
-            else if (l2New) pin = 2;
-            else if (r2New) pin = 3;
+            if (r1New) pin = 0;
+            else if (r2New) pin = 1;
+            else if (l1New) pin = 2;
+            else if (l2New) pin = 3;
             if (pin >= 0) startSequence(neutralShift, pin);
         }
 
@@ -1604,7 +1690,7 @@ void opcontrol() {
         // CLAW
         // ==========================================
 
-        if (seqState == SEQ_RELEASE) {
+        if (seqState == SEQ_RELEASE || seqState == SEQ_BACKUP) {
             claw.move_voltage(-12000);
         }
         else if (seqState == SEQ_RESET) {
@@ -1675,7 +1761,7 @@ void opcontrol() {
                     setArmBrake(false);
                     if (lastArmDirection == 1) arm.move_voltage(2500);
                     else if (lastArmDirection == 2) arm.brake();   // R2/L2 moved it up, keep it held
-                    else arm.move_voltage(-3000);   // raise toward -4000/-5000 if too weak
+                    else arm.move_voltage(-5000);   // raise toward -4000/-5000 if too weak
                 }
                 else if (r1Prev && !r1Held) {
                     // R1 let go: coast so the pin does not drag
