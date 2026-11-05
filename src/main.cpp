@@ -431,7 +431,7 @@ const int    AIV_YELLOW_SIG_ID   = 1;      // color signature ID for yellow (1-7
 const bool   AIV_SET_COLOR_IN_CODE = true; // true = this program defines the yellow signature itself
                                            // false = use whatever the AI Vision utility saved
 const bool   AIV_USE_GAME_MODEL  = true;   // true = game element AI model, false = color signature
-const int    AIV_PIN_CLASS_ID    = 1;      // class ID of the pin in the game model (found with AIV_FIND_CLASS_MODE)
+const int    AIV_PIN_CLASS_ID    = 3;      // class ID of the pin in the game model (found with AIV_FIND_CLASS_MODE)
                                            // used when AIV_USE_GAME_MODEL is true
 
 // ---- geometry ----
