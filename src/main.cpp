@@ -431,11 +431,11 @@ const int    AIV_YELLOW_SIG_ID   = 1;      // color signature ID for yellow (1-7
 const bool   AIV_SET_COLOR_IN_CODE = true; // true = this program defines the yellow signature itself
                                            // false = use whatever the AI Vision utility saved
 const bool   AIV_USE_GAME_MODEL  = true;   // true = game element AI model, false = color signature
-const int    AIV_PIN_CLASS_ID    = 3;      // class ID of the pin in the game model (found with AIV_FIND_CLASS_MODE)
+const int    AIV_PIN_CLASS_ID    = 1;      // class ID of the pin in the game model (found with AIV_FIND_CLASS_MODE)
                                            // used when AIV_USE_GAME_MODEL is true
 
 // ---- geometry ----
-const double AIV_CAMERA_OFFSET_LEFT_IN = -4.6;  // camera is this far LEFT of drivetrain center, seen from behind
+const double AIV_CAMERA_OFFSET_LEFT_IN = -6.75;  // camera is this far LEFT of drivetrain center, seen from behind
 const double AIV_PIN_WIDTH_IN    = 3.0;    // TODO measure: real width of the yellow blob the sensor boxes
 const double AIV_IMAGE_WIDTH_PX  = 320.0;  // AI Vision image is 320 x 240
 const double AIV_IMAGE_CENTER_PX = AIV_IMAGE_WIDTH_PX / 2.0;
@@ -918,14 +918,19 @@ void autonomous() {
 
    liftAutonomousMode = true;
    enableLiftPID();
-/*
+
    // Arm down so the claw is at pickup height, claw spinning to take the pin in.
    chassis.setPose(0, 0, 180);
 
    claw.move_voltage(12000);
+   moveArmAuton(-90);
+   aivSetDriveSpeed(30);
+    AivEnd pinEnd = driveBackToPin(1000, 10000, 50, 12, 2000);
+    pros::delay(15000);
+
 
    // Toggle roller while the claw runs.
-
+/*
    setLiftTarget(145);
    chassis.moveToPoint(0, 8, 750, {.forwards=false, .minSpeed = 33});
    moveArmAuton(90);
@@ -953,8 +958,6 @@ pros::delay(500);
     pros::delay(750);
     claw.move_voltage(-12000);
     pros::delay(500);
-    */
-    chassis.setPose(26,24,180);
     chassis.moveToPoint(24, 35, 3000, {.forwards=false, .maxSpeed = 50});
     chassis.waitUntil(3);
     claw.move_voltage(12000);
@@ -973,7 +976,7 @@ pros::delay(500);
     pros::delay(500);
     claw.move_voltage(-12000);
     pros::delay(1000);
-
+*/
    //standalone skills
 
    //return to loader
@@ -1086,8 +1089,8 @@ const double kHInch[kHN]  = {1,  7.5,   16, 25.5, 30.5, 33.0};
 //   alliance pin 1 = 3.25 - 2.93 = 0.32, clamped to 1.00 (lift cannot go lower)
 // Neutral pin 4 (35.84 in) is above the top of the table; it will go as high as
 // the lift can and no further. Change the 33.0 in the table above once measured.
-const double kNeutralPinIn[4]  = {5.84, 15.84, 25.84, 35.84};
-const double kAlliancePinIn[4] = {1.00, 10.32, 17.32, 27.32};
+const double kNeutralPinIn[4]  = {1, 15.84, 20.84, 26.84};
+const double kAlliancePinIn[4] = {1.00, 10.32, 17.32, 23.32};
 
 double interpTable(const double* xs, const double* ys, int n, double x) {
     if (x <= xs[0]) return ys[0];
