@@ -437,7 +437,7 @@ const int    AIV_YELLOW_SIG_ID   = 1;      // color signature ID for yellow (1-7
 const bool   AIV_SET_COLOR_IN_CODE = true; // true = this program defines the yellow signature itself
                                            // false = use whatever the AI Vision utility saved
 const bool   AIV_USE_GAME_MODEL  = true;   // true = game element AI model, false = color signature
-const int    AIV_PIN_CLASS_ID    = 1;      // class ID of the pin in the game model (found with AUTON_MODE 1)
+const int    AIV_PIN_CLASS_ID    = 2;      // class ID of the pin in the game model (found with AUTON_MODE 1)
                                            // used when AIV_USE_GAME_MODEL is true
 
 // ---- geometry ----
@@ -818,171 +818,327 @@ AivEnd driveBackToPin(double maxDistanceIn, int timeoutMs,
 }
 
 // =====================================================================
-// AI VISION: TRACK A PIN IN PLACE (PURE ROTATION)
+// AI VISION: TRACK A PIN IN PLACE (PURE ROTATION, BEZIER TURN SPEED)
 // =====================================================================
 //
 // One update step, non-blocking. Call it repeatedly from a loop. It never drives
 // forward or backward: both sides always get equal and opposite commands, so the
 // only motion possible is rotation about the robot's own centre.
 //
-// Same targeting and P control as driveBackToPin() minus the drive term, so
-// anything tuned there carries straight over. Tracking state lives in the file
-// statics below between calls, the way driveBackToPin() keeps it in locals
-// across its own loop.
+// Only used by AUTON_MODE 2. Nothing in normal autonomous or driver control
+// calls it, and it touches only the drive motors.
 //
-// Returns true while a pin is being tracked, false when none is in view.
+// THE MATHS (aim for the middle of the ROBOT, not the middle of the camera)
+//
+//   The camera sits AIV_CAMERA_OFFSET_LEFT_IN to one side of the turning centre
+//   and AIV_CAMERA_BACK_IN behind it. From one frame:
+//       pxPerIn = blobWidthPx / AIV_PIN_WIDTH_IN        (inches to pixels at the pin)
+//       lens-to-pin distance   = AIV_FOCAL_PX / pxPerIn
+//       x = (blobCentreX - imageCentre) / pxPerIn - offset   sideways from the robot's centreline, in
+//       z = lens-to-pin distance + AIV_CAMERA_BACK_IN         straight back from the turning centre, in
+//       angle to turn = atan2(x, z)
+//   That is the turn that puts the pin on the robot's centreline. The sideways
+//   shift is only ignored when the pin is very far away.
+//
+// LAST SEEN
+//
+//   Every good frame is turned into an ABSOLUTE heading (IMU) that the robot has to
+//   face for the pin to be on its centreline. The robot steers to that heading
+//   whether or not the camera still sees the pin. So when the pin drops out, or
+//   swings out of view while the robot turns, the robot carries on turning toward
+//   where it was last seen, instead of stopping, and the camera picks it up again.
+//   Memory is forgotten after TRACK_MEMORY_MS, and runs slower than live tracking.
+//
+// PIN CUT OFF AT THE EDGE OF THE IMAGE
+//
+//   When a pin comes in from the side the box is cut off by the image edge, so its
+//   width is too small. A tiny width reads as "very far away", which makes the
+//   sideways offset vanish and the robot aims the CAMERA at it, which can send it
+//   the wrong way. A cut-off box now borrows the last full-width reading, and its
+//   centre is rebuilt from the edge that is still in view. With no full-width
+//   reading yet it just turns toward the pin to bring it fully into view.
+//
+// SMOOTHNESS
+//
+//   * The camera frame is ~100 ms old when read. The robot's IMU heading is
+//     logged, so the frame's angle is taken against the heading at the moment it
+//     was captured (TRACK_VISION_LATENCY_MS).
+//   * Turn speed is a Bezier curve on the angle error: eases in away from the
+//     target, eases out as it closes in. Inside TRACK_DEADBAND_DEG it stops.
+//   * Speeding up is gentle (TRACK_ACCEL), slowing down is fast (TRACK_DECEL).
+//   * Counter-clockwise turns are faster (TRACK_CCW_SCALE) because the camera is
+//     on the left and its view swings away from the pin turning that way.
+//
+// Returns true while the camera can see a pin, false when it cannot (the robot may
+// still be turning toward the last seen position, see aivTrackUsingMemory).
 
-// Telemetry and persistent state for the pin tracker.
-// These declarations must appear before trackPinInPlaceReset() and
-// trackPinInPlace(), because both functions use them.
-double aivTrackError   = 0;    // pixels, pin centre minus target column
-double aivTrackTargetX = AIV_IMAGE_CENTER_PX;
-double aivTrackTurn    = 0;    // move() units currently applied
-bool   aivTrackHasPin  = false;
+// ---- geometry for the angle calculation ----
+// Horizontal field of view of the AI Vision sensor, in degrees. This is an
+// ESTIMATE, check it. It sets the pixels-to-degrees scale for pins that are cut
+// off at the edge. It does not change where the robot stops.
+const double AIV_HFOV_DEG       = 74.0;
+const double AIV_FOCAL_PX       = (AIV_IMAGE_WIDTH_PX / 2.0) /
+                                  std::tan(AIV_HFOV_DEG * 3.14159265358979 / 360.0);
+// TODO measure: how far BEHIND the robot's turning centre the camera lens sits,
+// in inches. Only changes how hard it turns for a given pixel error (the stop
+// point is where the pin is on the centreline, whatever this is set to).
+const double AIV_CAMERA_BACK_IN = 7.0;
+
+// ---- tuning ----
+const double TRACK_DEADBAND_DEG  = 2.0;    // inside this the robot stops turning (bigger = looser, smoother)
+const double TRACK_FULL_ERR_DEG  = 35.0;   // error at which the turn reaches TRACK_MAX_TURN
+const double TRACK_MIN_TURN      = 10.0;   // move() units just outside the deadband, enough to actually move
+const double TRACK_MAX_TURN      = 45.0;   // move() units at full error
+const double TRACK_BEZ_C1        = 0.10;   // Bezier shape: both near 0 / 1 give a gentle S-curve.
+const double TRACK_BEZ_C2        = 0.90;   //   Raise C1 or lower C2 for a snappier response.
+const double TRACK_ACCEL         = 300.0;  // max SPEED-UP of the turn command per second (3 per 10 ms loop)
+const double TRACK_DECEL         = 1500.0; // max SLOW-DOWN per second (15 per 10 ms loop), keep this high
+// The camera is on the LEFT of the drivetrain facing backward, so turning
+// COUNTER-clockwise swings its view away and it loses the pin unless the robot
+// moves faster. Every counter-clockwise turn (speed and speed-up rate) is
+// multiplied by this. 1.0 = same as clockwise. Raise it if it still loses the pin
+// turning that way, lower it if it overshoots that way.
+const double TRACK_CCW_SCALE     = 2.5;
+// How old a camera frame is by the time it is read. If it still overshoots,
+// raise this. If it stops short or feels sluggish, lower it.
+const double TRACK_VISION_LATENCY_MS = 100.0;
+// Last seen: how long to keep turning toward the remembered spot, and the speed
+// cap while doing it (it is less certain than a live reading).
+const double   TRACK_MEMORY_MS       = 2500.0;
+const double   TRACK_MEMORY_MAX_TURN = 30.0;
+// A box edge this close to the image edge counts as cut off.
+const double   TRACK_EDGE_PX         = 3.0;
+
+// telemetry, so a caller can report what the tracker is doing
+double aivTrackError   = 0;                    // degrees, angle from the centreline to the pin, right of it is positive
+double aivTrackTargetX = AIV_IMAGE_CENTER_PX;  // image column the centreline currently sits at (display only)
+double aivTrackTurn    = 0;                    // move() units currently applied (after smoothing)
+bool   aivTrackHasPin  = false;                // the camera sees a pin right now
+bool   aivTrackUsingMemory = false;            // pin not visible, turning toward where it was last seen
 
 static double   aivTrackLastX    = AIV_IMAGE_CENTER_PX;
-static double   aivTrackWindow   = AIV_FIRST_WINDOW_PX;
+static double   aivTrackDesired  = 0;     // turn the Bezier asks for, before the slew limit
 static uint32_t aivTrackLastSeen = 0;
+static uint32_t aivTrackLastCall = 0;
 static bool     aivTrackPrimed   = false;
 
-// More aggressive active pin tracking
-const double AIV_ACTIVE_TRACK_KP = 0.45;
-const double AIV_ACTIVE_TRACK_MAX = 50.0;
-const double AIV_ACTIVE_TRACK_MIN_TURN = 8.0;
-const double AIV_ACTIVE_TRACK_DEADBAND = 2.0;
+// last raw camera frame, so a repeated frame is not mistaken for a new one
+static bool     aivFrameValid = false;
+static double   aivFrameCx    = 0;
+static double   aivFrameW     = 0;
+static double   aivFrameErr   = 0;   // angle from that frame, degrees (used only if the IMU is unavailable)
 
-// Tracking and reacquisition
-const double AIV_ACTIVE_TRACK_WINDOW = 100.0;
-const double AIV_ACTIVE_SEARCH_WINDOW = 160.0;
-const double AIV_ACTIVE_SEARCH_TURN = 12.0;
+// last seen: the absolute IMU heading at which the pin is on the centreline
+static bool     aivTargetValid   = false;
+static double   aivTargetHeading = 0;
 
-const uint32_t AIV_ACTIVE_LOST_CONFIRM_MS = 140;
-const uint32_t AIV_ACTIVE_SLOW_SEARCH_MS = 40;
+// last full-width (not cut off) blob width, smoothed
+static bool     aivGoodWValid = false;
+static double   aivGoodW      = 0;
 
-static double aivTrackSearchDirection = 1.0;
+// short log of IMU heading, so the heading at the moment a frame was captured
+// can be looked up
+static const int TRACK_HIST_N = 64;   // 64 calls is about 640 ms at a 10 ms loop
+static double aivHistHeading[TRACK_HIST_N];
+static double aivHistTime[TRACK_HIST_N];
+static int    aivHistNext  = 0;
+static int    aivHistCount = 0;
+
+static void aivHistPush(uint32_t t, double heading) {
+    aivHistTime[aivHistNext]    = (double)t;
+    aivHistHeading[aivHistNext] = heading;
+    aivHistNext = (aivHistNext + 1) % TRACK_HIST_N;
+    if (aivHistCount < TRACK_HIST_N) aivHistCount++;
+}
+
+// Heading logged closest to time t (ms). Falls back to `fallback` if nothing is logged.
+static double aivHeadingAt(double t, double fallback) {
+    double best = fallback;
+    double bestDiff = 1e18;
+    for (int i = 0; i < aivHistCount; i++) {
+        const double d = std::fabs(aivHistTime[i] - t);
+        if (d < bestDiff) { bestDiff = d; best = aivHistHeading[i]; }
+    }
+    return best;
+}
+
+// Cubic Bezier from 0 to 1 with control values c1 and c2. t in 0..1.
+static double aivBezierEase(double t) {
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    const double u = 1.0 - t;
+    return 3.0 * u * u * t * TRACK_BEZ_C1 + 3.0 * u * t * t * TRACK_BEZ_C2 + t * t * t;
+}
+
 // Call once before a tracking loop so it does not start on stale state.
-
 void trackPinInPlaceReset() {
-    aivTrackLastX = AIV_IMAGE_CENTER_PX;
-    aivTrackWindow = AIV_ACTIVE_SEARCH_WINDOW;
+    aivTrackLastX    = AIV_IMAGE_CENTER_PX;
+    aivTrackDesired  = 0;
     aivTrackLastSeen = pros::millis();
-
-    aivTrackTurn = 0;
-    aivTrackError = 0;
-    aivTrackTargetX = AIV_IMAGE_CENTER_PX;
-
-    aivTrackHasPin = false;
-    aivTrackSearchDirection = 1.0;
-
-    aivTrackPrimed = true;
+    aivTrackLastCall = pros::millis();
+    aivTrackTurn     = 0;
+    aivTrackError    = 0;
+    aivTrackTargetX  = AIV_IMAGE_CENTER_PX;
+    aivTrackHasPin   = false;
+    aivTrackUsingMemory = false;
+    aivFrameValid    = false;
+    aivTargetValid   = false;
+    aivGoodWValid    = false;
+    aivHistNext      = 0;
+    aivHistCount     = 0;
+    aivTrackPrimed   = true;
 }
 
 bool trackPinInPlace() {
-
-    if (!aivTrackPrimed)
-        trackPinInPlaceReset();
+    if (!aivTrackPrimed) trackPinInPlaceReset();
 
     const uint32_t now = pros::millis();
+    double dtMs = (double)(now - aivTrackLastCall);
+    aivTrackLastCall = now;
+    if (dtMs < 1.0) dtMs = 1.0;
+    if (dtMs > 50.0) dtMs = 50.0;   // a long gap must not allow a big jump
 
-    double cx = 0;
-    double wpx = 0;
+    // IMU heading, clockwise positive. Logged every call for the latency correction.
+    const double heading = imu.get_rotation();
+    const bool imuOK = std::isfinite(heading);
+    if (imuOK) aivHistPush(now, heading);
 
-    // ---------------------------------------------------------
-    // FIND PIN
-    // ---------------------------------------------------------
-
-    if (aivFindPin(aivTrackLastX, aivTrackWindow, cx, wpx)) {
-
+    double cx = 0, wpx = 0;
+    // Whole image is the search window: a pin anywhere on screen is accepted.
+    if (aivFindPin(aivTrackLastX, AIV_IMAGE_WIDTH_PX, cx, wpx)) {
         aivTrackLastSeen = now;
-        aivTrackLastX = cx;
-        aivTrackWindow = AIV_ACTIVE_TRACK_WINDOW;
-        aivTrackHasPin = true;
+        aivTrackLastX    = cx;
+        aivTrackHasPin   = true;
 
-        // Calculate target column using camera offset.
-        const double pxPerIn = wpx / AIV_PIN_WIDTH_IN;
+        // Only recompute on a NEW frame. A repeated frame changes nothing.
+        if (!aivFrameValid || cx != aivFrameCx || wpx != aivFrameW) {
+            aivFrameCx    = cx;
+            aivFrameW     = wpx;
+            aivFrameValid = true;
 
-        double targetX =
-            AIV_IMAGE_CENTER_PX +
-            AIV_CAMERA_OFFSET_LEFT_IN * pxPerIn;
+            // Is the box cut off by the edge of the image?
+            const double left  = cx - wpx / 2.0;
+            const double right = cx + wpx / 2.0;
+            const bool clipL = left  <= TRACK_EDGE_PX;
+            const bool clipR = right >= AIV_IMAGE_WIDTH_PX - TRACK_EDGE_PX;
 
-        // Keep target inside the camera image.
-        if (targetX < 8.0) targetX = 8.0;
-        if (targetX > AIV_IMAGE_WIDTH_PX - 8.0)
-            targetX = AIV_IMAGE_WIDTH_PX - 8.0;
+            double cxUse = cx;
+            double wUse  = wpx;
+            bool   trust = true;
 
-        const double error = cx - targetX;
-
-        aivTrackTargetX = targetX;
-        aivTrackError = error;
-
-        // -----------------------------------------------------
-        // MORE SENSITIVE STEERING
-        // -----------------------------------------------------
-
-        if (std::fabs(error) <= AIV_ACTIVE_TRACK_DEADBAND) {
-
-            aivTrackTurn = 0;
-
-        } else {
-
-            double requestedTurn =
-                AIV_STEER_SIGN * AIV_ACTIVE_TRACK_KP * error;
-
-            // Make sure small errors still produce enough
-            // motor power to actually turn the robot.
-            if (std::fabs(requestedTurn) < AIV_ACTIVE_TRACK_MIN_TURN) {
-
-                requestedTurn =
-                    (requestedTurn >= 0)
-                    ? AIV_ACTIVE_TRACK_MIN_TURN
-                    : -AIV_ACTIVE_TRACK_MIN_TURN;
+            if (clipL != clipR) {
+                // Exactly one side cut off: the width is too small and the centre
+                // is pulled inward. Rebuild both from the side still in view.
+                if (aivGoodWValid) {
+                    wUse  = aivGoodW;
+                    cxUse = clipL ? right - wUse / 2.0 : left + wUse / 2.0;
+                } else {
+                    trust = false;   // nothing to borrow from yet
+                }
             }
+            else if (!clipL && !clipR) {
+                // Full box: remember its width (smoothed) for later cut-off frames.
+                aivGoodW = aivGoodWValid ? 0.7 * aivGoodW + 0.3 * wpx : wpx;
+                aivGoodWValid = true;
+            }
+            // (both sides cut off: pin wider than the view, use it as it is)
 
-            aivTrackTurn = aivClamp(
-                requestedTurn,
-                AIV_ACTIVE_TRACK_MAX
-            );
+            double angleDeg;
+            if (trust) {
+                const double pxPerIn = wUse / AIV_PIN_WIDTH_IN;
+                aivTrackTargetX = AIV_IMAGE_CENTER_PX + AIV_CAMERA_OFFSET_LEFT_IN * pxPerIn;
 
-            // Remember which direction to search if the pin disappears.
-            aivTrackSearchDirection =
-                (aivTrackTurn >= 0) ? 1.0 : -1.0;
+                // Sideways from the robot's centreline (inches) and straight back
+                // from its turning centre (inches), then the angle between them.
+                const double xRelIn = (cxUse - AIV_IMAGE_CENTER_PX) / pxPerIn
+                                      - AIV_CAMERA_OFFSET_LEFT_IN;
+                const double zRelIn = AIV_FOCAL_PX / pxPerIn + AIV_CAMERA_BACK_IN;
+                angleDeg = std::atan2(xRelIn, zRelIn) * 180.0 / 3.14159265358979;
+            } else {
+                // Cut off and no good width yet. Turn toward it to bring it into
+                // view, a later full frame does the precise aim.
+                angleDeg = std::atan2(cx - AIV_IMAGE_CENTER_PX, AIV_FOCAL_PX)
+                           * 180.0 / 3.14159265358979;
+            }
+            aivFrameErr = angleDeg;
+
+            // Turn the angle into an absolute heading, using the heading the robot
+            // had when the frame was captured, so the age of the frame does not matter.
+            if (imuOK) {
+                const double headingThen =
+                    aivHeadingAt((double)now - TRACK_VISION_LATENCY_MS, heading);
+                aivTargetHeading = headingThen + AIV_STEER_SIGN * angleDeg;
+                aivTargetValid   = true;
+            }
         }
     }
-
-    // ---------------------------------------------------------
-    // PIN NOT DETECTED
-    // ---------------------------------------------------------
-
     else {
-
-        const uint32_t missingFor = now - aivTrackLastSeen;
-
-        // After a short dropout, slow down instead of continuing
-        // the previous aggressive steering command.
-        if (missingFor >= AIV_ACTIVE_SLOW_SEARCH_MS) {
-
-            aivTrackTurn =
-                aivTrackSearchDirection *
-                AIV_ACTIVE_SEARCH_TURN;
-        }
-
-        // Confirm that the pin is actually lost.
-        if (missingFor >= AIV_ACTIVE_LOST_CONFIRM_MS) {
-
+        if (now - aivTrackLastSeen >= AIV_LOST_CONFIRM_MS) {
+            // The camera has really lost it. The remembered heading is kept.
             aivTrackHasPin = false;
-
-            // Open the entire camera field for reacquisition.
-            aivTrackWindow = AIV_ACTIVE_SEARCH_WINDOW;
-            aivTrackLastX = AIV_IMAGE_CENTER_PX;
-
-            aivTrackError = 0;
+            aivTrackLastX  = AIV_IMAGE_CENTER_PX;
+        }
+        if ((double)(now - aivTrackLastSeen) >= TRACK_MEMORY_MS) {
+            // Too long ago to trust. Forget it all.
+            aivTargetValid = false;
+            aivGoodWValid  = false;
+            aivFrameValid  = false;
         }
     }
 
-    // ---------------------------------------------------------
-    // APPLY PURE ROTATION
-    // ---------------------------------------------------------
+    // Error from the remembered heading, which also covers dropouts.
+    aivTrackUsingMemory = false;
+    bool haveErr = false;
+    double err = 0;
+    if (imuOK && aivTargetValid) {
+        err = AIV_STEER_SIGN * (aivTargetHeading - heading);
+        haveErr = true;
+        aivTrackUsingMemory = !aivTrackHasPin;
+    }
+    else if (!imuOK && aivTrackHasPin && aivFrameValid) {
+        err = aivFrameErr;   // no IMU: use the raw frame angle
+        haveErr = true;
+    }
 
+    if (haveErr) {
+        const double absErr = std::fabs(err);
+        aivTrackError = err;
+
+        if (absErr <= TRACK_DEADBAND_DEG) {
+            aivTrackDesired = 0;
+        }
+        else {
+            // 0 at the edge of the deadband, 1 at TRACK_FULL_ERR_DEG.
+            const double t = (absErr - TRACK_DEADBAND_DEG) /
+                             (TRACK_FULL_ERR_DEG - TRACK_DEADBAND_DEG);
+            double mag = TRACK_MIN_TURN +
+                         (TRACK_MAX_TURN - TRACK_MIN_TURN) * aivBezierEase(t);
+            if (aivTrackUsingMemory && mag > TRACK_MEMORY_MAX_TURN) mag = TRACK_MEMORY_MAX_TURN;
+
+            // Sign of the motor command: positive is clockwise, negative is
+            // counter-clockwise. Counter-clockwise gets the extra speed.
+            const double dir = AIV_STEER_SIGN * (err > 0 ? 1.0 : -1.0);
+            if (dir < 0) mag *= TRACK_CCW_SCALE;
+            if (mag > 127.0) mag = 127.0;
+            aivTrackDesired = dir * mag;
+        }
+    }
+    else {
+        aivTrackDesired = 0;
+    }
+
+    // Slew limit: gentle speeding up, fast slowing down. Slowing down means the
+    // command is getting smaller in size, or is flipping sign.
+    const bool slowing = (std::fabs(aivTrackDesired) < std::fabs(aivTrackTurn)) ||
+                         (aivTrackDesired * aivTrackTurn < 0);
+    const double accel = (aivTrackDesired < 0) ? TRACK_ACCEL * TRACK_CCW_SCALE : TRACK_ACCEL;
+    const double maxStep = (slowing ? TRACK_DECEL : accel) * dtMs / 1000.0;
+    double diff = aivTrackDesired - aivTrackTurn;
+    if (diff >  maxStep) diff =  maxStep;
+    if (diff < -maxStep) diff = -maxStep;
+    aivTrackTurn += diff;
+
+    // Pure rotation: equal and opposite, so there is no forward component.
     leftMotors.move(aivTrackTurn);
     rightMotors.move(-aivTrackTurn);
 
@@ -1216,16 +1372,19 @@ void autonomous() {
    // behind the robot, move it around, and the robot should keep turning so the
    // pin stays on the drivetrain centreline.
    //
-   // Controller line 0 shows "Trk e<error> t<targetX>". Error should settle
-   // inside AIV_DEADBAND_PX. If targetX ever reads outside 0..320 the pin is too
-   // close for the offset maths to have a solution and the robot will hunt
-   // without ever converging, because the column it is steering toward is off
-   // the edge of the image. With AIV_CAMERA_OFFSET_LEFT_IN -6.75 and
-   // AIV_PIN_WIDTH_IN 3.0 that happens once the blob is wider than about 71 px:
-   //     targetX = 160 - 2.25 * widthPx
-   // driveBackToPin() never hits this because it reaches the pin and ends first.
-   // A standing tracker sits in it. Fix it by measuring AIV_PIN_WIDTH_IN
-   // properly, or clamp targetX to the image.
+   // Controller line 0 shows "Trk e<error> t<targetX>". e is the angle from the
+   // drivetrain centreline to the pin in DEGREES (right of it is positive) and
+   // should settle inside TRACK_DEADBAND_DEG. t is the image column the centreline
+   // currently sits at, for reference only.
+   //
+   // "Trk: mem e<error>" means the camera has lost the pin and the robot is turning
+   // toward where it was last seen (see TRACK_MEMORY_MS, TRACK_MEMORY_MAX_TURN).
+   //
+   // Still overshooting: raise TRACK_VISION_LATENCY_MS, lower TRACK_MAX_TURN.
+   // Stops short or sluggish: lower TRACK_VISION_LATENCY_MS, raise TRACK_MIN_TURN.
+   // Check AIV_PIN_WIDTH_IN, AIV_HFOV_DEG and AIV_CAMERA_BACK_IN, they set the
+   // angle maths.
+   //
    chassis.cancelAllMotions();
 
    // Nothing here drives the lift. Leave it braked where it is rather than limp.
@@ -1247,7 +1406,11 @@ void autonomous() {
                controller.print(0, 0, "Trk e%d t%d    ",
                                 (int)aivTrackError, (int)aivTrackTargetX);
            } else {
-               controller.print(0, 0, "Trk: no pin    ");
+               if (aivTrackUsingMemory) {
+                   controller.print(0, 0, "Trk: mem e%d    ", (int)aivTrackError);
+               } else {
+                   controller.print(0, 0, "Trk: no pin    ");
+               }
            }
        }
 
