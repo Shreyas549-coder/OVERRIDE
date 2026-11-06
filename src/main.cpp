@@ -437,7 +437,7 @@ const int    AIV_YELLOW_SIG_ID   = 1;      // color signature ID for yellow (1-7
 const bool   AIV_SET_COLOR_IN_CODE = true; // true = this program defines the yellow signature itself
                                            // false = use whatever the AI Vision utility saved
 const bool   AIV_USE_GAME_MODEL  = true;   // true = game element AI model, false = color signature
-const int    AIV_PIN_CLASS_ID    = 3;      // class ID of the pin in the game model (found with AUTON_MODE 1)
+const int    AIV_PIN_CLASS_ID    = 1;      // class ID of the pin in the game model (found with AUTON_MODE 1)
                                            // used when AIV_USE_GAME_MODEL is true
 
 // ---- geometry ----
@@ -832,9 +832,11 @@ AivEnd driveBackToPin(double maxDistanceIn, int timeoutMs,
 //
 // Returns true while a pin is being tracked, false when none is in view.
 
-// telemetry, so a caller can report what the tracker is doing
+// Telemetry and persistent state for the pin tracker.
+// These declarations must appear before trackPinInPlaceReset() and
+// trackPinInPlace(), because both functions use them.
 double aivTrackError   = 0;    // pixels, pin centre minus target column
-double aivTrackTargetX = 0;    // the image column the pin is being driven to
+double aivTrackTargetX = AIV_IMAGE_CENTER_PX;
 double aivTrackTurn    = 0;    // move() units currently applied
 bool   aivTrackHasPin  = false;
 
@@ -843,57 +845,149 @@ static double   aivTrackWindow   = AIV_FIRST_WINDOW_PX;
 static uint32_t aivTrackLastSeen = 0;
 static bool     aivTrackPrimed   = false;
 
+// More aggressive active pin tracking
+const double AIV_ACTIVE_TRACK_KP = 0.45;
+const double AIV_ACTIVE_TRACK_MAX = 50.0;
+const double AIV_ACTIVE_TRACK_MIN_TURN = 8.0;
+const double AIV_ACTIVE_TRACK_DEADBAND = 2.0;
+
+// Tracking and reacquisition
+const double AIV_ACTIVE_TRACK_WINDOW = 100.0;
+const double AIV_ACTIVE_SEARCH_WINDOW = 160.0;
+const double AIV_ACTIVE_SEARCH_TURN = 12.0;
+
+const uint32_t AIV_ACTIVE_LOST_CONFIRM_MS = 140;
+const uint32_t AIV_ACTIVE_SLOW_SEARCH_MS = 40;
+
+static double aivTrackSearchDirection = 1.0;
 // Call once before a tracking loop so it does not start on stale state.
+
 void trackPinInPlaceReset() {
-    aivTrackLastX    = AIV_IMAGE_CENTER_PX;
-    aivTrackWindow   = AIV_FIRST_WINDOW_PX;
+    aivTrackLastX = AIV_IMAGE_CENTER_PX;
+    aivTrackWindow = AIV_ACTIVE_SEARCH_WINDOW;
     aivTrackLastSeen = pros::millis();
-    aivTrackTurn     = 0;
-    aivTrackError    = 0;
-    aivTrackHasPin   = false;
-    aivTrackPrimed   = true;
+
+    aivTrackTurn = 0;
+    aivTrackError = 0;
+    aivTrackTargetX = AIV_IMAGE_CENTER_PX;
+
+    aivTrackHasPin = false;
+    aivTrackSearchDirection = 1.0;
+
+    aivTrackPrimed = true;
 }
 
 bool trackPinInPlace() {
-    if (!aivTrackPrimed) trackPinInPlaceReset();
+
+    if (!aivTrackPrimed)
+        trackPinInPlaceReset();
 
     const uint32_t now = pros::millis();
 
-    double cx = 0, wpx = 0;
-    if (aivFindPin(aivTrackLastX, aivTrackWindow, cx, wpx)) {
-        aivTrackLastSeen = now;
-        aivTrackLastX    = cx;
-        aivTrackWindow   = AIV_TRACK_WINDOW_PX;
-        aivTrackHasPin   = true;
+    double cx = 0;
+    double wpx = 0;
 
+    // ---------------------------------------------------------
+    // FIND PIN
+    // ---------------------------------------------------------
+
+    if (aivFindPin(aivTrackLastX, aivTrackWindow, cx, wpx)) {
+
+        aivTrackLastSeen = now;
+        aivTrackLastX = cx;
+        aivTrackWindow = AIV_ACTIVE_TRACK_WINDOW;
+        aivTrackHasPin = true;
+
+        // Calculate target column using camera offset.
         const double pxPerIn = wpx / AIV_PIN_WIDTH_IN;
-        const double targetX = AIV_IMAGE_CENTER_PX + AIV_CAMERA_OFFSET_LEFT_IN * pxPerIn;
-        const double error   = cx - targetX;
+
+        double targetX =
+            AIV_IMAGE_CENTER_PX +
+            AIV_CAMERA_OFFSET_LEFT_IN * pxPerIn;
+
+        // Keep target inside the camera image.
+        if (targetX < 8.0) targetX = 8.0;
+        if (targetX > AIV_IMAGE_WIDTH_PX - 8.0)
+            targetX = AIV_IMAGE_WIDTH_PX - 8.0;
+
+        const double error = cx - targetX;
 
         aivTrackTargetX = targetX;
-        aivTrackError   = error;
+        aivTrackError = error;
 
-        if (std::fabs(error) < AIV_DEADBAND_PX) aivTrackTurn = 0;
-        else aivTrackTurn = aivClamp(AIV_STEER_SIGN * aivSteerKp * error, aivSteerMax);
-    }
-    else if (now - aivTrackLastSeen >= AIV_LOST_CONFIRM_MS) {
-        // Really gone. Stop rotating rather than spinning forever on a stale
-        // error, and reopen the search window so it can be reacquired anywhere
-        // in frame.
-        aivTrackHasPin = false;
-        aivTrackTurn   = 0;
-        aivTrackWindow = AIV_FIRST_WINDOW_PX;
-        aivTrackLastX  = AIV_IMAGE_CENTER_PX;
-    }
-    // else: a frame or two missing, hold the last turn
+        // -----------------------------------------------------
+        // MORE SENSITIVE STEERING
+        // -----------------------------------------------------
 
-    // Pure rotation: equal and opposite, so there is no forward component.
+        if (std::fabs(error) <= AIV_ACTIVE_TRACK_DEADBAND) {
+
+            aivTrackTurn = 0;
+
+        } else {
+
+            double requestedTurn =
+                AIV_STEER_SIGN * AIV_ACTIVE_TRACK_KP * error;
+
+            // Make sure small errors still produce enough
+            // motor power to actually turn the robot.
+            if (std::fabs(requestedTurn) < AIV_ACTIVE_TRACK_MIN_TURN) {
+
+                requestedTurn =
+                    (requestedTurn >= 0)
+                    ? AIV_ACTIVE_TRACK_MIN_TURN
+                    : -AIV_ACTIVE_TRACK_MIN_TURN;
+            }
+
+            aivTrackTurn = aivClamp(
+                requestedTurn,
+                AIV_ACTIVE_TRACK_MAX
+            );
+
+            // Remember which direction to search if the pin disappears.
+            aivTrackSearchDirection =
+                (aivTrackTurn >= 0) ? 1.0 : -1.0;
+        }
+    }
+
+    // ---------------------------------------------------------
+    // PIN NOT DETECTED
+    // ---------------------------------------------------------
+
+    else {
+
+        const uint32_t missingFor = now - aivTrackLastSeen;
+
+        // After a short dropout, slow down instead of continuing
+        // the previous aggressive steering command.
+        if (missingFor >= AIV_ACTIVE_SLOW_SEARCH_MS) {
+
+            aivTrackTurn =
+                aivTrackSearchDirection *
+                AIV_ACTIVE_SEARCH_TURN;
+        }
+
+        // Confirm that the pin is actually lost.
+        if (missingFor >= AIV_ACTIVE_LOST_CONFIRM_MS) {
+
+            aivTrackHasPin = false;
+
+            // Open the entire camera field for reacquisition.
+            aivTrackWindow = AIV_ACTIVE_SEARCH_WINDOW;
+            aivTrackLastX = AIV_IMAGE_CENTER_PX;
+
+            aivTrackError = 0;
+        }
+    }
+
+    // ---------------------------------------------------------
+    // APPLY PURE ROTATION
+    // ---------------------------------------------------------
+
     leftMotors.move(aivTrackTurn);
     rightMotors.move(-aivTrackTurn);
 
     return aivTrackHasPin;
 }
-
 // =====================================================================
 
 void initialize() {
@@ -1058,8 +1152,8 @@ void runR2Sequence() {
     liftRight.move_voltage(0);
 
     // Run the R2 movement
-    liftLeft.set_current_limit(2500);
-    liftRight.set_current_limit(2500);
+    liftLeft.set_current_limit(300);
+    liftRight.set_current_limit(300);
 
     liftLeft.move_voltage(-8000);
     liftRight.move_voltage(-8000);
@@ -1170,7 +1264,7 @@ void autonomous() {
 
 
    // Arm down so the claw is at pickup height, claw spinning to take the pin in.
-   /*
+   
    chassis.setPose(0, 0, 180);
    claw.move_voltage(12000);
 
@@ -1183,7 +1277,7 @@ void autonomous() {
    chassis.waitUntilDone();
    setLiftTarget(0);
    chassis.turnToHeading(0, 750, {.maxSpeed=60});
-   chassis.moveToPoint(0, -3, 1000, {.forwards = false, .minSpeed = 33});
+   chassis.moveToPoint(0, -5, 1000, {.forwards = false, .minSpeed = 33});
   
 
 
@@ -1191,15 +1285,15 @@ void autonomous() {
    chassis.waitUntil(4);
     moveArmAuton(-90);
    
-   chassis.turnToHeading(225, 1000);
+   chassis.turnToHeading(235, 1000);
    chassis.waitUntilDone();
    aivSetDriveSpeed(50);
-AivEnd pinEnd = driveBackToPin(1000, 10000, 50, 8, 1000);
+AivEnd pinEnd = driveBackToPin(100, 10000, 50, 6, 750);
 pros::delay(500);
    chassis.turnToHeading(180, 500);
     moveArmAuton(90);
     setLiftTarget(60);
-    chassis.moveToPoint(26, 24, 1000, {.maxSpeed = 60});
+    chassis.moveToPoint(26, 24, 2500, {.maxSpeed = 60});
     chassis.waitUntilDone();
     setLiftTarget(0);
     pros::delay(750);
@@ -1209,7 +1303,7 @@ pros::delay(500);
     chassis.waitUntil(3);
     claw.move_voltage(12000);
     moveArmAuton(-90);
-    chassis.turnToHeading(315, 1000);
+    chassis.turnToHeading(305, 1000);
     chassis.waitUntilDone();
    aivSetDriveSpeed(50);
     AivEnd pinEnd2 = driveBackToPin(1000, 10000, 50, 6, 1000);
@@ -1235,13 +1329,13 @@ pros::delay(500);
    //return to loader
    
 chassis.setPose(-47.223, -34.389, 0);
-chassis.moveToPoint(-47.223, -34.389-22, 1500, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.moveToPoint(-47.223, -34.389-21, 1500, {.forwards=false, .maxSpeed=50, .minSpeed=30});
 chassis.waitUntil(4);
 setLiftTarget(0);
 claw.move_voltage(12000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1000);
-chassis.moveToPoint(-46.223-13,-34.389-22, 1500, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.moveToPoint(-46.223-13,-34.389-21, 1500, {.forwards=false, .maxSpeed=50, .minSpeed=30});
 chassis.waitUntil(6);
     claw.move_voltage(12000);
 pros::delay(1000);
@@ -1251,22 +1345,23 @@ chassis.setPose(-62.253, -58.81, 90);
 chassis.moveToPoint(-62.253+12, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
 chassis.turnToHeading(0, 1000);
 moveArmAuton(90);
-setLiftTarget(140);
+setLiftTarget(160);
 chassis.moveToPoint(-62.253+13, -58.81+27, 2000, {.maxSpeed=50, .minSpeed=30});
 chassis.waitUntilDone();
-setLiftTarget(100);
+setLiftTarget(120);
  pros::delay(1000);
    claw.move_voltage(-12000);
    pros::delay(1000);
-   claw.move_voltage(0);
 
 //return to loader
 chassis.setPose(-47.223, -34.389, 0);
 chassis.moveToPoint(-47.223, -34.389-22, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
-chassis.waitUntil(4);
-pros::Task r2Task([] {
-    runR2Sequence();
-});
+
+chassis.waitUntil(8);
+setLiftTarget(0);
+claw.move_voltage(12000);
+moveArmAuton(-90);
+
 
 pros::delay(2000);
 moveArmAuton(-90);
@@ -1281,7 +1376,7 @@ chassis.setPose(-62.253, -58.81, 90);
 chassis.moveToPoint(-62.253+12, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
 chassis.turnToHeading(-5, 1000);
 moveArmAuton(90);
-setLiftTarget(180);
+setLiftTarget(200);
 chassis.moveToPoint(-62.253+14, -58.81+27, 2000, {.maxSpeed=50, .minSpeed=30});
 
 chassis.waitUntilDone();
@@ -1293,9 +1388,11 @@ setLiftTarget(150);
 
 //back to loader
 chassis.setPose(-47.223, -34.389, 0);
-setLiftTarget(0);
-moveArmAuton(-90);
 chassis.moveToPoint(-47.223, -34.389-22, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.waitUntil(4);
+setLiftTarget(0);
+claw.move_voltage(12000);
+moveArmAuton(-90);
 chassis.turnToHeading(90, 1000);
 chassis.moveToPoint(-46.223-14,-34.389-22.5, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
 chassis.waitUntil(6);
@@ -1303,20 +1400,20 @@ chassis.waitUntil(6);
 pros::delay(1000);
 
 chassis.setPose(0,0,0);
-chassis.moveToPoint(0, 16, 2000, {.maxSpeed=50});
+chassis.moveToPoint(0, 10, 2000, {.maxSpeed=50});
 chassis.turnToHeading(-90, 1000);
-chassis.moveToPoint(-10, 16, 2000, {.maxSpeed=50});
+chassis.moveToPoint(-10, 10, 2000, {.maxSpeed=50});
 chassis.turnToHeading(-25, 1000);
-chassis.moveToPoint(-55, 62, 7000, {.maxSpeed=50});
+chassis.moveToPoint(-80, 62, 4000, {.maxSpeed=50});
 moveArmAuton(90);
 setLiftTarget(90);
 chassis.waitUntilDone();
-setLiftTarget(60);
+setLiftTarget(40);
  pros::delay(1000);
    claw.move_voltage(-12000);
    pros::delay(1000);
    claw.move_voltage(0);
-   */
+   
 
 #endif
 }
@@ -1401,7 +1498,7 @@ const uint32_t SEQ_PRE_RELEASE_MS = 50; // after the lift lowers, wait at least 
 // the lift starts descending. After SEQ_RESET_ARM_BACK_DELAY_MS the arm continues
 // back to its resting position. The reset ends when the lift is down and the arm
 // has stopped; the max is only a safety net.
-const uint32_t SEQ_RESET_ARM_BACK_DELAY_MS = 500;   // arm stops at upright this long, then continues back
+const uint32_t SEQ_RESET_ARM_BACK_DELAY_MS = 700;   // arm stops at upright this long, then continues back
 const int32_t  SEQ_RESET_ARM_UP_VOLTAGE    = 12000; // arm voltage flipping back to straight up
 const int32_t  SEQ_RESET_ARM_BACK_VOLTAGE  = 6000;  // arm voltage for the final move back (was -6000)
 const uint32_t SEQ_RESET_BACK_MIN_MS = 200;   // after the arm starts going back, never finish before this
@@ -1511,8 +1608,8 @@ void cancelSequence() {
 // Starts the reset: lift down and arm back to upright, driven in SEQ_RESET.
 void seqBeginReset() {
     liftPIDEnabled = false;
-    liftLeft.set_current_limit(2500);
-    liftRight.set_current_limit(2500);
+    liftLeft.set_current_limit(300);
+    liftRight.set_current_limit(300);
     seqEnter(SEQ_RESET);
 }
 
@@ -2068,8 +2165,8 @@ void opcontrol() {
                 liftRight.move_voltage(12000);
             }
             else if (leftHeld) {
-                liftLeft.move_voltage(-8000);
-                liftRight.move_voltage(-8000);
+                liftLeft.move_voltage(-4000);
+                liftRight.move_voltage(-4000);
             }
             else {
                 liftLeft.brake();
