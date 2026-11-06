@@ -28,16 +28,22 @@
 
 
 // =====================================================================
-// AI VISION YELLOW FINDER
-//   1 = autonomous() does NOTHING except read the AI Vision sensor and show
-//       the yellow blobs it sees (brain screen lines 0-4, controller line 0, and
-//       the PROS terminal). Point the rear sensor at a pin, run autonomous, and
-//       check that the pin is boxed steadily. If it is not, tune the AIV_YELLOW_*
-//       numbers below.
+// AUTONOMOUS MODE
 //   0 = normal autonomous
+//   1 = Object ID / yellow finder. autonomous() does NOTHING except read the AI
+//       Vision sensor and show the blobs it sees (brain screen lines 0-3,
+//       controller line 0, and the PROS terminal). Point the rear sensor at a
+//       pin, run autonomous, and check that it is boxed steadily. If it is not,
+//       tune the AIV_YELLOW_* numbers below. Read AIV_PIN_CLASS_ID off here.
+//   2 = Pin tracking demo. The robot rotates IN PLACE to keep the pin on the
+//       drivetrain centreline. It never drives forward or backward.
 // Set back to 0 when you are done.
+//
+// This macro is read in three places, not just autonomous(): aivInit() picks the
+// detection type from it, and the screen task switches its layout on it. All
+// three have to agree.
 // =====================================================================
-#define AIV_FIND_CLASS_MODE 0
+#define AUTON_MODE 2
 
 
 // controller
@@ -431,7 +437,7 @@ const int    AIV_YELLOW_SIG_ID   = 1;      // color signature ID for yellow (1-7
 const bool   AIV_SET_COLOR_IN_CODE = true; // true = this program defines the yellow signature itself
                                            // false = use whatever the AI Vision utility saved
 const bool   AIV_USE_GAME_MODEL  = true;   // true = game element AI model, false = color signature
-const int    AIV_PIN_CLASS_ID    = 3;      // class ID of the pin in the game model (found with AIV_FIND_CLASS_MODE)
+const int    AIV_PIN_CLASS_ID    = 3;      // class ID of the pin in the game model (found with AUTON_MODE 1)
                                            // used when AIV_USE_GAME_MODEL is true
 
 // ---- geometry ----
@@ -484,7 +490,7 @@ void aivSetSteering(double kp, double maxSteer) {
 void aivInit() {
     aivision.reset();
     // The class id finder needs the AI model objects on, whatever AIV_USE_GAME_MODEL says.
-    aivision.enable_detection_types((AIV_USE_GAME_MODEL || AIV_FIND_CLASS_MODE)
+    aivision.enable_detection_types((AIV_USE_GAME_MODEL || AUTON_MODE == 1)
                                         ? pros::AivisionModeType::objects
                                         : pros::AivisionModeType::colors);
     if (!AIV_USE_GAME_MODEL && AIV_SET_COLOR_IN_CODE) {
@@ -812,6 +818,83 @@ AivEnd driveBackToPin(double maxDistanceIn, int timeoutMs,
 }
 
 // =====================================================================
+// AI VISION: TRACK A PIN IN PLACE (PURE ROTATION)
+// =====================================================================
+//
+// One update step, non-blocking. Call it repeatedly from a loop. It never drives
+// forward or backward: both sides always get equal and opposite commands, so the
+// only motion possible is rotation about the robot's own centre.
+//
+// Same targeting and P control as driveBackToPin() minus the drive term, so
+// anything tuned there carries straight over. Tracking state lives in the file
+// statics below between calls, the way driveBackToPin() keeps it in locals
+// across its own loop.
+//
+// Returns true while a pin is being tracked, false when none is in view.
+
+// telemetry, so a caller can report what the tracker is doing
+double aivTrackError   = 0;    // pixels, pin centre minus target column
+double aivTrackTargetX = 0;    // the image column the pin is being driven to
+double aivTrackTurn    = 0;    // move() units currently applied
+bool   aivTrackHasPin  = false;
+
+static double   aivTrackLastX    = AIV_IMAGE_CENTER_PX;
+static double   aivTrackWindow   = AIV_FIRST_WINDOW_PX;
+static uint32_t aivTrackLastSeen = 0;
+static bool     aivTrackPrimed   = false;
+
+// Call once before a tracking loop so it does not start on stale state.
+void trackPinInPlaceReset() {
+    aivTrackLastX    = AIV_IMAGE_CENTER_PX;
+    aivTrackWindow   = AIV_FIRST_WINDOW_PX;
+    aivTrackLastSeen = pros::millis();
+    aivTrackTurn     = 0;
+    aivTrackError    = 0;
+    aivTrackHasPin   = false;
+    aivTrackPrimed   = true;
+}
+
+bool trackPinInPlace() {
+    if (!aivTrackPrimed) trackPinInPlaceReset();
+
+    const uint32_t now = pros::millis();
+
+    double cx = 0, wpx = 0;
+    if (aivFindPin(aivTrackLastX, aivTrackWindow, cx, wpx)) {
+        aivTrackLastSeen = now;
+        aivTrackLastX    = cx;
+        aivTrackWindow   = AIV_TRACK_WINDOW_PX;
+        aivTrackHasPin   = true;
+
+        const double pxPerIn = wpx / AIV_PIN_WIDTH_IN;
+        const double targetX = AIV_IMAGE_CENTER_PX + AIV_CAMERA_OFFSET_LEFT_IN * pxPerIn;
+        const double error   = cx - targetX;
+
+        aivTrackTargetX = targetX;
+        aivTrackError   = error;
+
+        if (std::fabs(error) < AIV_DEADBAND_PX) aivTrackTurn = 0;
+        else aivTrackTurn = aivClamp(AIV_STEER_SIGN * aivSteerKp * error, aivSteerMax);
+    }
+    else if (now - aivTrackLastSeen >= AIV_LOST_CONFIRM_MS) {
+        // Really gone. Stop rotating rather than spinning forever on a stale
+        // error, and reopen the search window so it can be reacquired anywhere
+        // in frame.
+        aivTrackHasPin = false;
+        aivTrackTurn   = 0;
+        aivTrackWindow = AIV_FIRST_WINDOW_PX;
+        aivTrackLastX  = AIV_IMAGE_CENTER_PX;
+    }
+    // else: a frame or two missing, hold the last turn
+
+    // Pure rotation: equal and opposite, so there is no forward component.
+    leftMotors.move(aivTrackTurn);
+    rightMotors.move(-aivTrackTurn);
+
+    return aivTrackHasPin;
+}
+
+// =====================================================================
 
 void initialize() {
    // ORDER MATTERS HERE, and the old order is why the controller text stopped.
@@ -833,7 +916,9 @@ void initialize() {
        // X/Y are inches relative to the origin set by chassis.setPose().
        const lemlib::Pose pose = chassis.getPose();
        // Keep these readings visible in every tuning mode.
-#if AIV_FIND_CLASS_MODE
+// Must stay == 1, not a bare truthiness test: AUTON_MODE 2 is the tracking demo
+// and wants the normal pose/lift layout, not the finder's.
+#if AUTON_MODE == 1
        // Class id finder: lines 0-3 show what the AI Vision sensor sees.
        pros::lcd::set_text(0, fmt::format("AIV objects: {}  (finder mode)", aivSeenCount));
        for (int i = 0; i < AIV_SEEN_MAX; i++) {
@@ -992,7 +1077,7 @@ void runR2Sequence() {
 }
 
 void autonomous() {
-#if AIV_FIND_CLASS_MODE
+#if AUTON_MODE == 1
 
    // YELLOW FINDER. Nothing on the robot moves. Point the rear AI Vision sensor
    // at a pin and watch it from any of:
@@ -1002,7 +1087,7 @@ void autonomous() {
    //   * the PROS terminal (pros terminal)
    // The pin should be boxed steadily. If it flickers or is missed, tune the
    // AIV_YELLOW_* numbers. If other yellow things get boxed, narrow them.
-   // Then set AIV_FIND_CLASS_MODE back to 0.
+   // Then set AUTON_MODE back to 0.
    uint32_t lastReport = 0;
    while (true) {
        aivScanClasses();
@@ -1031,6 +1116,50 @@ void autonomous() {
        pros::delay(20);
    }
 
+#elif AUTON_MODE == 2
+
+   // PIN TRACKING DEMO. Pure rotation, the robot never translates. Put a pin
+   // behind the robot, move it around, and the robot should keep turning so the
+   // pin stays on the drivetrain centreline.
+   //
+   // Controller line 0 shows "Trk e<error> t<targetX>". Error should settle
+   // inside AIV_DEADBAND_PX. If targetX ever reads outside 0..320 the pin is too
+   // close for the offset maths to have a solution and the robot will hunt
+   // without ever converging, because the column it is steering toward is off
+   // the edge of the image. With AIV_CAMERA_OFFSET_LEFT_IN -6.75 and
+   // AIV_PIN_WIDTH_IN 3.0 that happens once the blob is wider than about 71 px:
+   //     targetX = 160 - 2.25 * widthPx
+   // driveBackToPin() never hits this because it reaches the pin and ends first.
+   // A standing tracker sits in it. Fix it by measuring AIV_PIN_WIDTH_IN
+   // properly, or clamp targetX to the image.
+   chassis.cancelAllMotions();
+
+   // Nothing here drives the lift. Leave it braked where it is rather than limp.
+   liftAutonomousMode = false;
+   liftPIDEnabled = false;
+   liftLeft.brake();
+   liftRight.brake();
+
+   trackPinInPlaceReset();
+
+   uint32_t lastReport = 0;
+   while (true) {
+       trackPinInPlace();
+
+       const uint32_t now = pros::millis();
+       if (now - lastReport >= 250) {
+           lastReport = now;
+           if (aivTrackHasPin) {
+               controller.print(0, 0, "Trk e%d t%d    ",
+                                (int)aivTrackError, (int)aivTrackTargetX);
+           } else {
+               controller.print(0, 0, "Trk: no pin    ");
+           }
+       }
+
+       pros::delay(10);
+   }
+
 #else
 
    liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
@@ -1039,8 +1168,6 @@ void autonomous() {
    liftAutonomousMode = true;
    enableLiftPID();
 
-   chassis.setPose(0, 0, 0);
-   rotateUntilPinFound(25, 360, 10000, true);
 
    // Arm down so the claw is at pickup height, claw spinning to take the pin in.
    /*
