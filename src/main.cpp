@@ -437,7 +437,7 @@ const int    AIV_YELLOW_SIG_ID   = 1;      // color signature ID for yellow (1-7
 const bool   AIV_SET_COLOR_IN_CODE = true; // true = this program defines the yellow signature itself
                                            // false = use whatever the AI Vision utility saved
 const bool   AIV_USE_GAME_MODEL  = true;   // true = game element AI model, false = color signature
-const int    AIV_PIN_CLASS_ID    = 2;      // class ID of the pin in the game model (found with AUTON_MODE 1)
+const int    AIV_PIN_CLASS_ID    = 3;      // class ID of the pin in the game model (found with AUTON_MODE 1)
                                            // used when AIV_USE_GAME_MODEL is true
 
 // ---- geometry ----
@@ -1308,8 +1308,8 @@ void runR2Sequence() {
     liftRight.move_voltage(0);
 
     // Run the R2 movement
-    liftLeft.set_current_limit(300);
-    liftRight.set_current_limit(300);
+    liftLeft.set_current_limit(750); //300
+    liftRight.set_current_limit(750); //300
 
     liftLeft.move_voltage(-8000);
     liftRight.move_voltage(-8000);
@@ -1368,6 +1368,320 @@ void autonomous() {
 
 #elif AUTON_MODE == 2
 
+   // =================================================================
+   // PIN TRACKING DEMO v2 - YELLOW COLOUR DETECTION, SYMMETRIC TURN
+   // =================================================================
+   //
+   // Pure rotation: both sides always get equal and opposite commands, so the
+   // only motion possible is turning about the robot's own centre.
+   //
+   // WHY v1 WORKED ONE WAY ONLY (v1 is kept, commented out, at the bottom of
+   // this branch):
+   //   v1 worked out the real-world angle to the pin from its apparent width,
+   //   including a sideways correction for the camera being off-centre:
+   //       xRelIn = (blobCentre - imageCentre) / pxPerIn - AIV_CAMERA_OFFSET_LEFT_IN
+   //   AIV_CAMERA_OFFSET_LEFT_IN is -6.75, so that subtraction ADDS a constant
+   //   +6.75 inches no matter where the pin is. That is a fixed turn bias always
+   //   in the SAME rotational direction. On one side it adds to the real error
+   //   (it turned, just not well); on the other side it cancels the real error,
+   //   so anything within roughly 10-20 degrees that way produced about zero
+   //   command and the robot sat still. Exactly the behaviour seen on the field.
+   //   The size of that bias is set by AIV_PIN_WIDTH_IN, which is still an
+   //   unmeasured guess, and TRACK_CCW_SCALE = 2.5 then made one direction
+   //   2.5x faster on top of it.
+   //
+   // WHAT v2 DOES INSTEAD
+   //   No distance maths, no field-of-view constant, no IMU heading memory, no
+   //   measured pin width. Just: steer so the yellow blob sits at the middle of
+   //   the image. One gain, one clamp, one slew rate, used identically for both
+   //   directions, so it cannot be lopsided.
+   //
+   //   Trade-off, on purpose: this aims the CAMERA at the pin, not the middle of
+   //   the drivetrain. Because the camera is mounted off to one side, the robot
+   //   ends up pointing a few degrees off the pin. For "it follows the pin" in
+   //   front of judges that is invisible. If you want it to aim the chassis
+   //   centreline instead, put a fixed pixel offset in TRK_AIM_OFFSET_PX and
+   //   tune it by eye - a constant cannot introduce a direction-dependent bias
+   //   the way the width-based maths did.
+   //
+   // DETECTION
+   //   Colour signature, not the game model, with a deliberately loose hue and
+   //   saturation window so the pin is picked up easily under whatever lighting
+   //   the venue has. Glare and shading often break one pin into several boxes,
+   //   so the biggest box is found first and any yellow box near it is merged
+   //   into the same bounding box. Without that the aim jumps between pieces.
+   //
+   // CONTROLLER LINE 0
+   //   "Pin x<col> w<width>"  tracking; x is the blob centre column, 160 = centred
+   //   "Pin: sweep <-1|1>"    lost, creeping the way it last went to find it again
+   //   "Pin: none"            nothing yellow in view, stopped
+   //
+   // IF IT TURNS THE WRONG WAY: set TRK_SIGN to -1. That is the only sign in
+   // here, and it flips both directions together.
+
+   // ---- tuning (all of it, mode 2 only, nothing outside this branch) ----
+   const int    TRK_SIG_ID        = AIV_YELLOW_SIG_ID;  // colour slot this demo programs
+   const double TRK_MIN_W_PX      = 5.0;    // ignore yellow specks narrower than this
+   const double TRK_MERGE_FACTOR  = 1.5;    // merge yellow boxes within this x the winner's width
+   const double TRK_AIM_OFFSET_PX = 0.0;    // + moves the aim point right of image centre
+   const int    TRK_SIGN          = 1;      // -1 if it turns away from the pin
+
+   // Smoothing. The blob centre is low-pass filtered, and only when the camera
+   // actually delivers a new frame (it runs ~30 fps while this loop runs at 100 Hz,
+   // so the same frame is read about three times and must not count as three).
+   const double TRK_FILTER        = 0.50;   // 0..1 per new frame. Lower = smoother but laggier.
+   const int    TRK_ACQUIRE_FRAMES = 2;     // good frames needed before it will move at all
+
+   // Hysteresis instead of one deadband: it starts turning at ENGAGE and does not
+   // stop until the error falls to RELEASE. With a single threshold the command
+   // chatters 0 / MIN_TURN / 0 while sitting on it.
+   const double TRK_ENGAGE_PX     = 25.0;   // start turning when error exceeds this
+   const double TRK_RELEASE_PX    = 12.0;   // keep turning until error drops below this
+   // After it releases, stay stopped for this long and refuse to re-engage. This is
+   // what stops it hunting: the robot needs time to actually come to rest, and the
+   // camera needs time to deliver frames taken from a STOPPED robot. Without it the
+   // loop re-engages on error measured while still coasting, overshoots the other
+   // way, and never settles on a stationary pin.
+   const uint32_t TRK_SETTLE_MS   = 400;
+
+   // SPEED. History, so none of this gets re-broken:
+   //   * kP 0.55 / max 80  -> far too fast, oscillated hard.
+   //   * kP 0.07 / max 20 / MIN_TURN 7 / RELEASE 10 -> barely twitched and stopped.
+   //     That was NOT lack of torque: the wheels did turn at 7, so stiction is
+   //     below that. It stopped because RELEASE 10 px is only ~2.7 degrees, so the
+   //     latch let go almost immediately.
+   //   * kP 0.30 / max 50 / MIN_TURN 18 -> moved well but hunted around a
+   //     stationary pin, because MIN_TURN 18 is a big enough command to coast past
+   //     the pin during the camera's ~100 ms delay, then correct back for ever.
+   // Hence: a LOW minimum command (little overshoot), a modest ceiling, and the
+   // settle dwell above to break the hunt. Smoothness comes from the dwell and the
+   // blink handling, not from starving the gains.
+   //   Hunting on a still pin  -> raise TRK_SETTLE_MS, then TRK_RELEASE_PX.
+   //   Barely moves / twitches -> raise TRK_MIN_TURN a little, and check that
+   //                              TRK_RELEASE_PX is not so wide it quits early.
+   //   Too slow to catch up    -> raise TRK_MAX_TURN first, TRK_KP only a little.
+   // With ~100 ms of camera delay, too much TRK_KP always ends in a fast limit
+   // cycle however smooth the slew limit is: that is the trap, not low speed.
+   const double TRK_KP            = 0.16;   // move() units per pixel of error
+   const double TRK_MIN_TURN      = 9.0;    // floor once engaged. Must beat stiction, but every unit
+                                            // above it is overshoot on a stationary pin. The wheels
+                                            // were seen moving at 7, so stiction is below that.
+   const double TRK_MAX_TURN      = 25.0;   // clamp, same both directions
+   const double TRK_SLEW_UP       = 2.5;    // max SPEED-UP per 10 ms loop (gentle starts)
+   const double TRK_SLEW_DOWN     = 5.0;    // max SLOW-DOWN per 10 ms loop (quick to back off)
+
+   // ---- what to do when the pin is not detected ----
+   // A loose colour signature flickers, so a dropout is usually the detector
+   // blinking, not the pin leaving. Reacting to a blink is what made it jitter:
+   // every flicker past the old 150 ms threshold fired a sweep pulse.
+   // So: coast down to a stop first, and only sweep after the pin has been gone a
+   // long time AND was last seen near the edge of the image, i.e. it really did
+   // leave the view. A pin that vanishes mid-image now produces no motion at all.
+   const uint32_t TRK_HOLD_MS     = 500;    // blind period before it considers the pin gone
+   const double TRK_HOLD_DECAY    = 0.98;   // command multiplier per loop while blind
+   const double TRK_EDGE_PX       = 45.0;   // last seen this close to an edge = it left the view
+   const uint32_t TRK_SWEEP_MS    = 1500;   // how long to creep after a pin that really left
+   const double TRK_SWEEP_TURN    = 18.0;   // creep speed while searching
+
+   chassis.cancelAllMotions();
+
+   // Nothing here drives the lift. Leave it braked where it is rather than limp.
+   liftAutonomousMode = false;
+   liftPIDEnabled = false;
+   liftLeft.brake();
+   liftRight.brake();
+
+   // aivInit() turned ON the AI game model, because AIV_USE_GAME_MODEL is true.
+   // This demo wants colour blobs, so it switches the sensor over here. Only
+   // AUTON_MODE 2 ever runs this, so the game model is left alone everywhere else.
+   aivision.enable_detection_types(pros::AivisionModeType::colors);
+   {
+       // Loose on purpose. hue_range and saturation_range are the "margin of
+       // error": widen them if the pin is missed, narrow them if the robot
+       // chases something else yellow in the room (wood floor, a sign, a shirt).
+       pros::AIVision::Color yellow = {.id = (uint8_t)TRK_SIG_ID,
+                                       .red = 235, .green = 200, .blue = 40,
+                                       .hue_range = 25, .saturation_range = 0.75};
+       aivision.set_color(yellow);
+   }
+   pros::delay(100);   // let the signature take effect before the first read
+
+   // Biggest yellow blob, with nearby yellow blobs merged into its bounding box.
+   auto findYellow = [&](double& cxOut, double& wOut) -> bool {
+       auto objects = aivision.get_all_objects();
+
+       // pass 1: the biggest acceptable yellow box
+       double bestL = 0, bestR = 0, bestArea = 0;
+       bool found = false;
+       for (auto& o : objects) {
+           if (!pros::AIVision::is_type(o, pros::AivisionDetectType::color)) continue;
+           if ((int)o.id != TRK_SIG_ID) continue;
+           const double w = o.object.color.width;
+           const double h = o.object.color.height;
+           if (w < TRK_MIN_W_PX) continue;
+           const double area = w * h;
+           if (area > bestArea) {
+               bestArea = area;
+               bestL = o.object.color.xoffset;
+               bestR = bestL + w;
+               found = true;
+           }
+       }
+       if (!found) return false;
+
+       // pass 2: swallow any yellow box close to the winner, so one pin split
+       // into several boxes is treated as one pin
+       const double reach = (bestR - bestL) * TRK_MERGE_FACTOR;
+       double l = bestL, r = bestR;
+       for (auto& o : objects) {
+           if (!pros::AIVision::is_type(o, pros::AivisionDetectType::color)) continue;
+           if ((int)o.id != TRK_SIG_ID) continue;
+           const double w = o.object.color.width;
+           if (w < TRK_MIN_W_PX) continue;
+           const double ol = o.object.color.xoffset;
+           const double orr = ol + w;
+           if (orr < bestL - reach || ol > bestR + reach) continue;
+           if (ol  < l) l = ol;
+           if (orr > r) r = orr;
+       }
+
+       cxOut = (l + r) / 2.0;
+       wOut  = r - l;
+       return true;
+   };
+
+   double   turn       = 0;   // command actually being applied, after the slew limit
+   double   errF       = 0;   // filtered error, pixels, + = pin right of the aim point
+   bool     haveErrF   = false;
+   bool     turning    = false;   // hysteresis latch
+   uint32_t releasedAt = 0;       // when the latch last released, for the settle dwell
+   bool     everReleased = false;
+   int      lastDir    = 1;   // which way the pin was last seen, for the search creep
+   int      goodFrames = 0;
+   double   lastRawCx  = -1, lastRawW = -1;   // to spot a genuinely new camera frame
+   double   lastGoodCx = AIV_IMAGE_CENTER_PX; // where it was when last detected
+   bool     everSeen   = false;
+   uint32_t lastSeen   = pros::millis();
+   uint32_t lastReport = 0;
+   double   shownW     = 0;
+   int      state      = 0;   // 0 none, 1 tracking, 2 coasting blind, 3 searching
+
+   while (true) {
+       const uint32_t now = pros::millis();
+       double cx = 0, wpx = 0;
+       double want = 0;
+       const bool detected = findYellow(cx, wpx);
+
+       if (detected) {
+           lastSeen   = now;
+           everSeen   = true;
+           lastGoodCx = cx;
+           shownW     = wpx;
+           if (goodFrames < TRK_ACQUIRE_FRAMES) goodFrames++;
+
+           // Filter only on a NEW frame, so reading the same frame three times
+           // does not triple the filter's effect.
+           const bool newFrame = (cx != lastRawCx) || (wpx != lastRawW);
+           if (newFrame) {
+               lastRawCx = cx;
+               lastRawW  = wpx;
+               const double errRaw = cx - (AIV_IMAGE_CENTER_PX + TRK_AIM_OFFSET_PX);
+               if (!haveErrF) { errF = errRaw; haveErrF = true; }
+               else           { errF += TRK_FILTER * (errRaw - errF); }
+           }
+       }
+
+       if (detected && goodFrames >= TRK_ACQUIRE_FRAMES && haveErrF) {
+           state = 1;
+           const double absErr = std::fabs(errF);
+
+           // Hysteresis latch: engage wide, release narrow, and after releasing
+           // stay put for TRK_SETTLE_MS before any new engage is allowed.
+           const bool settled = everReleased && (now - releasedAt < TRK_SETTLE_MS);
+           if (!turning && absErr > TRK_ENGAGE_PX && !settled) turning = true;
+           if ( turning && absErr < TRK_RELEASE_PX) {
+               turning      = false;
+               releasedAt   = now;
+               everReleased = true;
+           }
+
+           if (!turning) {
+               want = 0;
+           } else {
+               lastDir = (errF > 0) ? 1 : -1;
+               double mag = TRK_MIN_TURN + TRK_KP * (absErr - TRK_RELEASE_PX);
+               if (mag < TRK_MIN_TURN) mag = TRK_MIN_TURN;
+               if (mag > TRK_MAX_TURN) mag = TRK_MAX_TURN;
+               want = TRK_SIGN * lastDir * mag;
+           }
+       }
+       else if (everSeen && now - lastSeen < TRK_HOLD_MS) {
+           // Blind. Almost certainly the detector blinking. Coast smoothly down
+           // toward a stop instead of holding a big command through blind time.
+           state   = 2;
+           turning = false;
+           want    = turn * TRK_HOLD_DECAY;
+           if (std::fabs(want) < 1.0) want = 0;
+       }
+       else if (everSeen && now - lastSeen < TRK_HOLD_MS + TRK_SWEEP_MS &&
+                (lastGoodCx <= TRK_EDGE_PX ||
+                 lastGoodCx >= AIV_IMAGE_WIDTH_PX - TRK_EDGE_PX)) {
+           // Gone a long time AND last seen at the edge, so it really did leave
+           // the view. Creep the way it went to bring it back.
+           state      = 3;
+           turning    = false;
+           goodFrames = 0;
+           haveErrF   = false;
+           want       = TRK_SIGN * lastDir * TRK_SWEEP_TURN;
+       }
+       else {
+           // Gone, but it vanished mid-image: a detection failure, not a
+           // departure. Stay still and wait for it to come back.
+           state      = 0;
+           turning    = false;
+           goodFrames = 0;
+           haveErrF   = false;
+           want       = 0;
+       }
+
+       // Slew limit on the SIZE of the command, so it is identical for clockwise
+       // and counter-clockwise. Gentle to speed up, quicker to back off.
+       const bool reducing = (std::fabs(want) < std::fabs(turn)) || (want * turn < 0);
+       const double step = reducing ? TRK_SLEW_DOWN : TRK_SLEW_UP;
+       double diff = want - turn;
+       if (diff >  step) diff =  step;
+       if (diff < -step) diff = -step;
+       turn += diff;
+
+       // Pure rotation: equal and opposite, no forward component ever.
+       leftMotors.move(turn);
+       rightMotors.move(-turn);
+
+       if (now - lastReport >= 250) {
+           lastReport = now;
+           if (state == 1) {
+               controller.print(0, 0, "Pin e%d w%d    ", (int)errF, (int)shownW);
+           } else if (state == 2) {
+               controller.print(0, 0, "Pin: blink     ");
+           } else if (state == 3) {
+               controller.print(0, 0, "Pin: sweep %d  ", lastDir);
+           } else {
+               controller.print(0, 0, "Pin: none      ");
+           }
+       }
+
+       pros::delay(10);
+   }
+
+// ---------------------------------------------------------------------
+// OLD v1 TRACKER, COMMENTED OUT. Kept for reference only. It used the AI game
+// model plus the width-based angle maths described above, which carried the
+// one-directional bias. The trackPinInPlace() function it calls is still
+// defined further up the file and is simply no longer used.
+// ---------------------------------------------------------------------
+#if 0
+
+
    // PIN TRACKING DEMO. Pure rotation, the robot never translates. Put a pin
    // behind the robot, move it around, and the robot should keep turning so the
    // pin stays on the drivetrain centreline.
@@ -1417,6 +1731,8 @@ void autonomous() {
        pros::delay(10);
    }
 
+#endif   // old v1 pin tracker
+
 #else
 
    liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
@@ -1424,7 +1740,6 @@ void autonomous() {
 
    liftAutonomousMode = true;
    enableLiftPID();
-
 
    // Arm down so the claw is at pickup height, claw spinning to take the pin in.
    
@@ -1562,12 +1877,13 @@ chassis.waitUntil(6);
     claw.move_voltage(12000);
 pros::delay(1000);
 
+
 chassis.setPose(0,0,0);
-chassis.moveToPoint(0, 10, 2000, {.maxSpeed=50});
+chassis.moveToPoint(0, 15, 2000, {.maxSpeed=50});
 chassis.turnToHeading(-90, 1000);
-chassis.moveToPoint(-10, 10, 2000, {.maxSpeed=50});
-chassis.turnToHeading(-25, 1000);
-chassis.moveToPoint(-80, 62, 4000, {.maxSpeed=50});
+chassis.moveToPoint(-10, 15, 2000, {.maxSpeed=50});
+chassis.turnToHeading(-20, 1000);
+chassis.moveToPoint(-55, 62, 4000, {.maxSpeed=50});
 moveArmAuton(90);
 setLiftTarget(90);
 chassis.waitUntilDone();
@@ -1605,7 +1921,7 @@ const double kHInch[kHN]  = {1,  7.5,   16, 25.5, 30.5, 33.0};
 // Neutral pin 4 (35.84 in) is above the top of the table; it will go as high as
 // the lift can and no further. Change the 33.0 in the table above once measured.
 const double kNeutralPinIn[4]  = {1, 15.84, 20.84, 26.84};
-const double kAlliancePinIn[4] = {1.00, 10.32, 17.32, 23.32};
+const double kAlliancePinIn[4] = {1.00, 9.32, 16.32, 22.32}; // {1.00, 10.32, 17.32, 23.32}
 
 double interpTable(const double* xs, const double* ys, int n, double x) {
     if (x <= xs[0]) return ys[0];
@@ -1648,12 +1964,12 @@ const double ARM_UP_ROT_EMPTY  = 500;   // TODO: R2, arm up about 90 degrees, no
 const double ARM_UP_ROT_HELD   = 500;   // TODO: L2, arm up about 90 degrees, holding a pin
 const double LIFT_SETTLE_TOL   = 3.0;   // lift degrees
 const uint32_t SEQ_RELEASE_MS  = 600;   // how long the claw spins in reverse to let go
-const uint32_t SEQ_LIFT_DELAY_MS = 350; // lift waits this long after the arm starts moving
+const uint32_t SEQ_LIFT_DELAY_MS = 500; // 350 lift waits this long after the arm starts moving
 const uint32_t SEQ_FLIP_DELAY_MS = 150; // after the lift reaches height, wait this long before the arm flips (was hardcoded)
 const double   SEQ_FLIP_LIFT_TOL = 20.0;    // arm starts flipping once the lift is within this many degrees of its height (LIFT_SETTLE_TOL is too strict here)
 const uint32_t SEQ_RAISE_TIMEOUT_MS = 1500; // flip anyway if the lift/arm have not got there after this long (was 4000)
 const int32_t  SEQ_FLIP_VOLTAGE      = 12000; // arm voltage during the flip (full power, same as the other arm moves)
-const int32_t  SEQ_FLIP_HOLD_VOLTAGE = 4000;  // arm keeps pressing down with this once it is flipped (same as auton hold)
+const int32_t  SEQ_FLIP_HOLD_VOLTAGE = 5500;  //4000 arm keeps pressing down with this once it is flipped (same as auton hold)
 const uint32_t SEQ_ARM_SETTLE_MS = 200; // after the arm reaches the flip position, wait this long before the lift lowers
 const uint32_t SEQ_PRE_RELEASE_MS = 50; // after the lift lowers, wait at least this long before the claw lets go
 
@@ -1661,7 +1977,7 @@ const uint32_t SEQ_PRE_RELEASE_MS = 50; // after the lift lowers, wait at least 
 // the lift starts descending. After SEQ_RESET_ARM_BACK_DELAY_MS the arm continues
 // back to its resting position. The reset ends when the lift is down and the arm
 // has stopped; the max is only a safety net.
-const uint32_t SEQ_RESET_ARM_BACK_DELAY_MS = 700;   // arm stops at upright this long, then continues back
+const uint32_t SEQ_RESET_ARM_BACK_DELAY_MS = 850;   //700 arm stops at upright this long, then continues back
 const int32_t  SEQ_RESET_ARM_UP_VOLTAGE    = 12000; // arm voltage flipping back to straight up
 const int32_t  SEQ_RESET_ARM_BACK_VOLTAGE  = 6000;  // arm voltage for the final move back (was -6000)
 const uint32_t SEQ_RESET_BACK_MIN_MS = 200;   // after the arm starts going back, never finish before this
@@ -1771,8 +2087,8 @@ void cancelSequence() {
 // Starts the reset: lift down and arm back to upright, driven in SEQ_RESET.
 void seqBeginReset() {
     liftPIDEnabled = false;
-    liftLeft.set_current_limit(300);
-    liftRight.set_current_limit(300);
+    liftLeft.set_current_limit(750); //300
+    liftRight.set_current_limit(750); //300
     seqEnter(SEQ_RESET);
 }
 

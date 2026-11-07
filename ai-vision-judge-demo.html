@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PinLock — AI Vision Geometry</title>
+<style>
+  :root { color-scheme: dark; --bg:#07101b; --panel:#0d1b29; --panel2:#102334; --line:#2d4858; --text:#ecf5f7; --muted:#9eb5c0; --cyan:#56d9eb; --yellow:#ffd35a; --orange:#ff9971; --green:#74e2ba; --red:#ff7f8f; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  button { font:inherit; cursor:pointer; }
+  .shell { width:min(1680px, 100%); margin:auto; padding:24px 30px 28px; }
+  .top { display:flex; align-items:end; justify-content:space-between; gap:24px; padding-bottom:18px; border-bottom:1px solid var(--line); }
+  .eyebrow { color:var(--cyan); font:700 11px/1.2 ui-monospace,monospace; letter-spacing:.21em; text-transform:uppercase; }
+  h1 { font-size:clamp(27px,3vw,48px); letter-spacing:-.06em; line-height:1.05; margin:7px 0 5px; font-weight:760; }
+  .subtitle { color:var(--muted); font-size:14px; margin:0; max-width:700px; }
+  .top-right { text-align:right; display:grid; gap:5px; font:12px ui-monospace,monospace; color:var(--muted); }
+  .top-right strong { color:var(--green); font-size:15px; }
+  .toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:16px 0; }
+  .seg { display:flex; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:3px; }
+  .seg button { background:transparent; border:0; color:var(--muted); border-radius:7px; padding:9px 14px; font-weight:700; font-size:12px; }
+  .seg button.active { background:var(--cyan); color:var(--bg); }
+  .toolbutton { background:var(--panel); color:var(--text); border:1px solid var(--line); padding:9px 13px; border-radius:9px; font-size:12px; font-weight:700; }
+  .toolbutton:hover, .seg button:not(.active):hover { border-color:var(--cyan); color:var(--cyan); }
+  .toolbutton.warn { color:var(--yellow); }
+  .hint { margin-left:auto; color:var(--muted); font-size:12px; }
+  .stage { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .panel { min-width:0; background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+  .panelhead { display:flex; align-items:baseline; justify-content:space-between; gap:10px; padding:16px 19px 12px; }
+  .panelhead h2 { margin:0; font-size:17px; letter-spacing:-.025em; }
+  .panelhead span { color:var(--muted); font:11px ui-monospace,monospace; }
+  .scene { margin:0 15px 12px; background:#081722; border:1px solid #244354; border-radius:9px; overflow:hidden; aspect-ratio:1.56; position:relative; }
+  .scene svg { width:100%; height:100%; display:block; }
+  .scan { position:absolute; width:100%; height:1px; top:0; left:0; background:var(--cyan); opacity:.28; pointer-events:none; animation:scan 3.6s linear infinite; }
+  @keyframes scan { to { transform:translateY(540px); } }
+  .scene[data-lost="true"] .scan { opacity:.07; }
+  .panelfoot { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line); border-top:1px solid var(--line); }
+  .metric { background:var(--panel2); padding:12px 14px; min-width:0; }
+  .metric label { display:block; color:var(--muted); font:10px ui-monospace,monospace; text-transform:uppercase; letter-spacing:.09em; margin-bottom:5px; }
+  .metric b { font:700 clamp(14px,1.55vw,23px) ui-monospace,monospace; white-space:nowrap; }
+  .metric b.yellow { color:var(--yellow); } .metric b.cyan { color:var(--cyan); } .metric b.orange { color:var(--orange); }
+  .diagram-note { display:flex; gap:10px; justify-content:space-between; padding:0 18px 14px; font-size:11px; color:var(--muted); }
+  .diagram-note strong { color:var(--text); }
+  .flow { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:17px 0; }
+  .flow > span { color:var(--muted); font:700 11px ui-monospace,monospace; white-space:nowrap; }
+  .flow > i { flex:1; height:1px; background:var(--line); position:relative; }
+  .flow > i:after { content:""; position:absolute; right:0; top:-3px; border-left:6px solid var(--line); border-top:4px solid transparent; border-bottom:4px solid transparent; }
+  .math-title { display:flex; align-items:baseline; justify-content:space-between; margin:22px 0 11px; gap:14px; }
+  .math-title h2 { font-size:19px; margin:0; letter-spacing:-.03em; }
+  .math-title span { color:var(--muted); font-size:11px; }
+  .equations { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .eq { padding:15px 16px 14px; background:var(--panel); border:1px solid var(--line); border-radius:10px; min-height:126px; }
+  .eq .n { color:var(--cyan); font:700 10px ui-monospace,monospace; letter-spacing:.16em; margin-bottom:12px; }
+  .eq strong { display:block; font-size:13px; margin-bottom:8px; }
+  .eq code { display:block; color:var(--text); font:12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space:normal; overflow-wrap:anywhere; }
+  .eq em { display:block; color:var(--yellow); font:12px/1.5 ui-monospace,monospace; font-style:normal; margin-top:6px; }
+  .micro { display:grid; grid-template-columns:2fr 1fr; gap:14px; margin-top:14px; }
+  .strip { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 17px; }
+  .strip h3 { margin:0 0 7px; font-size:12px; color:var(--cyan); letter-spacing:.08em; text-transform:uppercase; }
+  .strip p { margin:0; color:var(--muted); font-size:12px; line-height:1.55; }
+  .strip code { color:var(--text); font:11px ui-monospace,monospace; }
+  .source { color:var(--muted); font-size:11px; margin:14px 0 0; line-height:1.5; }
+  .source strong { color:var(--text); }
+  .legend { display:flex; flex-wrap:wrap; gap:15px; font-size:11px; color:var(--muted); }
+  .swatch { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+  @media (max-width:1000px) { .shell{padding:16px} .stage{grid-template-columns:1fr} .equations{grid-template-columns:repeat(2,1fr)} .micro{grid-template-columns:1fr} .hint{width:100%; margin-left:0} }
+  @media (max-width:600px) { .top{align-items:start} .top-right{display:none} .equations{grid-template-columns:1fr} .panelfoot{grid-template-columns:repeat(2,1fr)} .scene{margin:0 8px 9px} .toolbar{gap:6px} }
+</style>
+</head>
+<body>
+<main class="shell">
+  <div class="top">
+    <div><div class="eyebrow">OVERRIDE · Autonomous vision system</div><h1>PINLOCK <span style="color:var(--cyan)">/</span> See. Calculate. Correct.</h1><p class="subtitle">One live camera frame and one moving robot, linked by the exact geometry and steering equations in <code>src/main.cpp</code>.</p></div>
+    <div class="top-right"><strong id="status">ACQUIRING PIN</strong><span>AI Vision model · class 3</span><span>rear-facing camera · 320 × 240 px</span></div>
+  </div>
+
+  <div class="toolbar">
+    <div class="seg" aria-label="Tracking behavior"><button id="trackMode" class="active">MODE 2 · Rotate in place</button><button id="driveMode">Normal auton · Backward approach</button></div>
+    <button id="playButton" class="toolbutton" aria-label="Pause animation">Pause</button>
+    <button id="resetButton" class="toolbutton">Reset</button>
+    <button id="sweepButton" class="toolbutton">Sweep pin</button>
+    <button id="hideButton" class="toolbutton warn">Hide pin for 1 s</button>
+    <span class="hint">Drag the pin on the Cartesian map to test a new angle.</span>
+  </div>
+
+  <div class="stage">
+    <section class="panel" aria-label="AI Vision sensor view">
+      <div class="panelhead"><h2>01 / What the sensor sees</h2><span>320 × 240 image coordinates · pixels</span></div>
+      <div class="scene" id="cameraScene">
+        <svg viewBox="0 0 400 285" role="img" aria-label="Illustrated AI Vision camera frame with a yellow pin, bounding box, width in pixels, image center and corrected target column">
+          <defs>
+            <pattern id="cameraGrid" width="25" height="25" patternUnits="userSpaceOnUse"><path d="M25 0H0V25" fill="none" stroke="#274755" stroke-width=".55"/></pattern>
+            <linearGradient id="pinBody" x1="0" x2="1"><stop stop-color="#77541c"/><stop offset=".26" stop-color="#ffd35a"/><stop offset=".72" stop-color="#fff3b0"/><stop offset="1" stop-color="#b77d20"/></linearGradient>
+          </defs>
+          <rect width="400" height="285" fill="#091a25"/>
+          <rect x="42" y="22" width="320" height="240" fill="url(#cameraGrid)" stroke="#345566"/>
+          <path d="M42 22h320M42 262h320" stroke="#63808b" stroke-width=".7"/>
+          <g fill="#93b0ba" font-size="9" font-family="monospace"><text x="38" y="15">0</text><text x="190" y="15">160</text><text x="347" y="15">320 px</text><text x="5" y="28">0</text><text x="5" y="144">120</text><text x="5" y="263">240</text></g>
+          <path d="M42 17v5M202 17v5M362 17v5" stroke="#93b0ba"/>
+          <line x1="202" x2="202" y1="22" y2="262" stroke="#a6c0c9" stroke-dasharray="4 5" opacity=".6"/>
+          <line id="targetLine" x1="145" x2="145" y1="22" y2="262" stroke="#56d9eb" stroke-width="1.6" stroke-dasharray="6 3"/>
+          <text id="targetLabel" x="149" y="37" fill="#56d9eb" font-size="10" font-weight="bold" font-family="monospace">centerline target</text>
+          <g id="pinGraphic" transform="translate(220 144) scale(1)">
+            <ellipse cx="0" cy="43" rx="18" ry="4" fill="#020a10" opacity=".6"/>
+            <path d="M-9 -36 Q-12 -40 -7 -45 L7 -45 Q12 -40 9 -36 L5 -18 L12 20 L8 35 Q0 40 -8 35 L-12 20 L-5 -18Z" fill="url(#pinBody)" stroke="#ffe087" stroke-width="1.3"/>
+            <path d="M-11 -24H11L14 -16H-14Z" fill="#fff0a3"/>
+            <path d="M-12 20 Q0 25 12 20 L11 29 Q0 33 -11 29Z" fill="#d89b2e"/>
+            <path d="M-2 -39L-1 17" stroke="#fff7c6" stroke-width="2" opacity=".65"/>
+          </g>
+          <rect id="pinBox" x="198" y="92" width="44" height="104" fill="none" stroke="#ffd35a" stroke-width="1.8"/>
+          <circle id="centerDot" cx="220" cy="144" r="2.8" fill="#ff9971"/>
+          <line id="widthBracket" x1="198" x2="242" y1="82" y2="82" stroke="#ffd35a" stroke-width="1.5"/>
+          <path id="bracketCaps" d="M198 78v8 M242 78v8" stroke="#ffd35a" stroke-width="1.5"/>
+          <text id="widthText" x="220" y="75" text-anchor="middle" fill="#ffd35a" font-size="11" font-weight="bold" font-family="monospace">w = 44 px</text>
+          <path id="pixelError" d="M145 214H220" stroke="#ff9971" stroke-width="2" marker-end="url(#arrowOrange)"/>
+          <defs><marker id="arrowOrange" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6Z" fill="#ff9971"/></marker></defs>
+          <text id="errorText" x="180" y="227" text-anchor="middle" fill="#ff9971" font-size="10" font-family="monospace">pixel error</text>
+          <rect x="49" y="232" width="85" height="23" rx="3" fill="#122d3b"/>
+          <text x="57" y="247" fill="#ffd35a" font-size="10" font-family="monospace">CLASS 3 PIN</text>
+          <text id="cameraState" x="352" y="247" text-anchor="end" fill="#74e2ba" font-size="9" font-family="monospace">DETECTED</text>
+        </svg>
+        <div class="scan"></div>
+      </div>
+      <div class="diagram-note"><span><strong>Yellow box</strong> = measured pin width and center</span><span><strong style="color:var(--cyan)">Cyan line</strong> = robot centerline target, not camera center</span></div>
+      <div class="panelfoot">
+        <div class="metric"><label>Box width</label><b class="yellow" id="boxWidth">— px</b></div>
+        <div class="metric"><label>Pin center</label><b id="boxCenter">— px</b></div>
+        <div class="metric"><label>Target column</label><b class="cyan" id="targetColumn">— px</b></div>
+        <div class="metric"><label>Pixel error</label><b class="orange" id="pixelErr">— px</b></div>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="Top-down Cartesian robot view">
+      <div class="panelhead"><h2>02 / What the robot does</h2><span>Cartesian field plane · inches</span></div>
+      <div class="scene">
+        <svg id="map" viewBox="-47 -47 94 94" role="img" aria-label="Top-down Cartesian grid showing robot, rear camera, fixed pin, target direction, and its rotating or backward-curving motion">
+          <defs><pattern id="fieldGrid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M10 0H0V10" fill="none" stroke="#2a4552" stroke-width=".2"/></pattern><marker id="fieldArrow" markerWidth="5" markerHeight="5" refX="4.5" refY="2.5" orient="auto"><path d="M0 0L5 2.5L0 5Z" fill="#56d9eb"/></marker></defs>
+          <rect x="-47" y="-47" width="94" height="94" fill="#091a25"/>
+          <rect x="-45" y="-45" width="90" height="90" fill="url(#fieldGrid)"/>
+          <path d="M-45 0H45M0 -45V45" stroke="#76909b" stroke-width=".32"/>
+          <g fill="#98b2bc" font-size="2.2" font-family="monospace"><text x="43" y="-1.2">+X</text><text x="1.5" y="-43">+Y</text><text x="-43" y="44">−40</text><text x="-22" y="1.4">−20</text><text x="18" y="1.4">20</text><text x="1.4" y="20">−20</text><text x="1.4" y="-20">20</text><text x="27" y="44">inches</text></g>
+          <polyline id="trail" points="0,0" fill="none" stroke="#56d9eb" stroke-width=".7" opacity=".8"/>
+          <path id="depthLeg" d="M0 0V37" fill="none" stroke="#56d9eb" stroke-width=".42" stroke-dasharray="1.2 1.1"/>
+          <path id="lateralLeg" d="M0 37H-14" fill="none" stroke="#ffd35a" stroke-width=".42" stroke-dasharray="1.2 1.1"/>
+          <text id="depthLegLabel" x="2" y="18" fill="#56d9eb" font-size="2.1" font-family="monospace">z = 37 in</text>
+          <text id="lateralLegLabel" x="-10" y="35" fill="#ffd35a" font-size="2.1" font-family="monospace">x = 14 in</text>
+          <path id="targetRay" d="M0 0L-14 37" fill="none" stroke="#ff9971" stroke-width=".5" stroke-dasharray="1 1.3"/>
+          <path id="centerlineRay" d="M0 0V32" fill="none" stroke="#56d9eb" stroke-width=".55" stroke-dasharray="1.8 1.2" marker-end="url(#fieldArrow)"/>
+          <g id="pinOnMap" transform="translate(-14 37)"><circle r="2.9" fill="#ffd35a" stroke="#fff0a3" stroke-width=".55"/><circle r="1.1" fill="#9e6c1a"/><text x="4" y="1" fill="#ffd35a" font-size="2.5" font-family="monospace">PIN</text></g>
+          <g id="robotOnMap">
+            <rect x="-9" y="-9" width="18" height="18" rx="1" fill="#133345" stroke="#75c7d9" stroke-width=".7"/>
+            <path d="M-6 -8H6M-6 -6H6" stroke="#74e2ba" stroke-width=".5"/><text x="0" y="-3.5" text-anchor="middle" fill="#74e2ba" font-size="2" font-family="monospace">FRONT</text>
+            <rect x="-10.5" y="-7" width="1.7" height="14" rx=".3" fill="#7f9fa8"/><rect x="8.8" y="-7" width="1.7" height="14" rx=".3" fill="#7f9fa8"/>
+            <circle id="cameraOnMap" cx="6.75" cy="7" r="1.3" fill="#ffd35a" stroke="#fff2b0" stroke-width=".4"/>
+            <path d="M6.75 7L6.75 12" stroke="#ffd35a" stroke-width=".4"/>
+            <circle r=".8" fill="#ecf5f7"/>
+          </g>
+          <text id="headingLabel" x="11" y="-12" fill="#ecf5f7" font-size="2.5" font-family="monospace">θ = 0°</text>
+          <text x="-44" y="-42" fill="#9eb5c0" font-size="2.2" font-family="monospace">ROBOT 18 × 18 IN</text>
+        </svg>
+      </div>
+      <div class="diagram-note"><span><strong style="color:var(--yellow)">Gold dot</strong> = rear-mounted AI sensor</span><span><strong style="color:var(--orange)">Orange ray</strong> = pin bearing</span></div>
+      <div class="panelfoot">
+        <div class="metric"><label>Turn angle α</label><b class="orange" id="turnAngle">—°</b></div>
+        <div class="metric"><label>Heading error e</label><b id="headingError">—°</b></div>
+        <div class="metric"><label>Left / right</label><b class="cyan" id="motors">— / —</b></div>
+        <div class="metric"><label>Robot pose</label><b id="pose">—</b></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="flow"><span>CLASS 3 BOX</span><i></i><span>WIDTH → PIXELS / INCH</span><i></i><span>OFFSET-CORRECTED BEARING</span><i></i><span>IMU TARGET + MOTOR COMMAND</span><i></i><span>NEW FRAME</span></div>
+
+  <div class="math-title"><h2 id="mathTitle">The exact calculation · mode 2</h2><span>Live substituted values update with the animation</span></div>
+  <div class="equations">
+    <article class="eq"><div class="n">01 / SENSOR</div><strong>Measure the pin in pixels</strong><code id="formula1">u = x + w/2</code><em id="value1">—</em></article>
+    <article class="eq"><div class="n">02 / SCALE</div><strong>Turn width into range</strong><code id="formula2">s = w / 3 in<br>f = 160 / tan(74°/2)</code><em id="value2">—</em></article>
+    <article class="eq"><div class="n">03 / GEOMETRY</div><strong>Aim the robot, not the lens</strong><code id="formula3">u* = 160 − 6.75s<br>x = (u − 160)/s − (−6.75)<br>z = f/s + 7<br>α = atan2(x,z)</code><em id="value3">—</em></article>
+    <article class="eq"><div class="n">04 / CONTROL</div><strong>Turn and check again</strong><code id="formula4">θ* = θ(frame − 100 ms) + α<br>e = θ* − θ(now)<br>L = T; R = −T</code><em id="value4">—</em></article>
+  </div>
+  <div class="micro">
+    <div class="strip"><h3 id="controlTitle">Why it stays steady</h3><p id="controlText">Outside the 2° deadband, <code>q = clamp((|e|−2)/33, 0, 1)</code>; <code>B(q) = 3(1−q)²q(0.10) + 3(1−q)q²(0.90) + q³</code>; turn magnitude <code>10 + 35B(q)</code>. The command accelerates at 300 units/s and decelerates at 1500 units/s. Counterclockwise commands are ×2.5. Left and right are equal and opposite, so mode 2 rotates without translating.</p></div>
+    <div class="strip"><h3>Robust detection</h3><p>Choose the largest <code>class 3</code> box by <code>area = w × h</code>, with <code>w ≥ 6 px</code>. A full box updates <code>w_good ← 0.7w_good + 0.3w</code>; a box clipped within <code>3 px</code> of an image edge borrows that width. On vision loss, follow the remembered IMU target for <code>2500 ms</code> at no more than <code>30/127</code> turn.</p></div>
+  </div>
+  <p class="source"><strong>Source:</strong> <code>src/main.cpp</code> — <code>aivFindPin()</code>, <code>trackPinInPlace()</code>, and <code>driveBackToPin()</code>. Game-model class ID 3 is enabled; <code>AUTON_MODE</code> is currently 0, so mode 2 is a selectable test, not the active routine. The configured lateral offset is <code>−6.75 in</code>; its physical mounting sign should be checked. The 3 in pin width, 74° field of view, and 7 in camera depth are configured estimates marked for measurement in the code. Animation uses the code's equations and controller limits; physical motor response and 50 ms sample frames are illustrative. The backward animation pauses before contact for clarity; the real function uses distance, time, and vision-loss limits. <strong>Mode 2 only turns in place.</strong> The backward curve is the separate normal-autonomous pickup function.</p>
+</main>
+
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const C = { pinW:3, width:320, imageCenter:160, lateral:-6.75, back:7, hfov:74, deadband:2, fullErr:35, minTurn:10, maxTurn:45, c1:.10, c2:.90, accel:300, decel:1500, ccw:2.5, memoryMs:2500, memoryMax:30, latencyMs:100, edge:3, steerKp:.25, steerMax:35, pixelDeadband:3, driveSpeed:50 };
+  const focal = 160 / Math.tan(C.hfov*Math.PI/360);
+  const rad = Math.PI/180;
+  const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+  const fmt = (v,d=1) => Number.isFinite(v) ? v.toFixed(d) : '—';
+  const set = (id,value) => { $(id).textContent = value; };
+  const svg = (id,attr,value) => $(id).setAttribute(attr,value);
+  const bezier = t => { t=clamp(t,0,1); const u=1-t; return 3*u*u*t*C.c1+3*u*t*t*C.c2+t*t*t; };
+  let mode='track', playing=true, hiddenUntil=0, dragging=false, sweep=false;
+  let pin={x:-14,y:-37};
+  let s;
+  function reset() {
+    sweep=false; set('sweepButton','Sweep pin'); pin={x:-14,y:-37};
+    s={x:0,y:0,heading:0,time:0,nextFrame:0,lastSeen:0,frame:null,turn:0,desired:0,targetHeading:null,goodW:null,frameErr:0,hasPin:false,memory:false,locked:false,lockHeading:0,lockTime:0,lockX:0,lockY:0,history:[],trail:[[0,0]],demoStopped:false};
+    hiddenUntil=0; render();
+  }
+  function projection(state) {
+    const th=state.heading*rad, dx=pin.x-state.x, dy=pin.y-state.y;
+    const lateral=-Math.cos(th)*dx+Math.sin(th)*dy;
+    const depth=-Math.sin(th)*dx-Math.cos(th)*dy;
+    const lens=depth-C.back;
+    if (lens<=1) return null;
+    const trueW=C.pinW*focal/lens;
+    const trueCx=C.imageCenter+(lateral+C.lateral)*trueW/C.pinW;
+    const left=clamp(trueCx-trueW/2,0,320), right=clamp(trueCx+trueW/2,0,320);
+    const w=right-left;
+    if (w<6 || right<=0 || left>=320) return null;
+    return {cx:(left+right)/2,w,left,right,trueCx,trueW,lateral,depth,lens};
+  }
+  function historic(t) {
+    let best=s.history[0] || {x:s.x,y:s.y,heading:s.heading,time:s.time}, dist=Infinity;
+    for (const h of s.history) { const d=Math.abs(h.time-t); if(d<dist){dist=d;best=h;} }
+    return best;
+  }
+  function newFrame() {
+    if (s.time<hiddenUntil) return;
+    const state=historic(s.time-C.latencyMs);
+    const p=projection(state);
+    if (!p) return;
+    s.lastSeen=s.time; s.hasPin=true;
+    // aivFindPin() returns the class-3 box center and its width. The demo shows one pin.
+    if (mode==='track') {
+      const changed=!s.frame || p.cx!==s.frame.cx || p.w!==s.frame.w;
+      if (changed) {
+        let useCx=p.cx,useW=p.w,trust=true;
+        const clipL=p.left<=C.edge, clipR=p.right>=320-C.edge;
+        if (clipL!==clipR) {
+          if (s.goodW!==null) { useW=s.goodW; useCx=clipL?p.right-useW/2:p.left+useW/2; }
+          else trust=false;
+        } else if (!clipL&&!clipR) s.goodW=s.goodW===null?p.w:.7*s.goodW+.3*p.w;
+        const scale=useW/C.pinW;
+        const x=trust?(useCx-160)/scale-C.lateral:NaN;
+        const z=trust?focal/scale+C.back:NaN;
+        const alpha=trust?Math.atan2(x,z)/rad:Math.atan2(p.cx-160,focal)/rad;
+        s.frame={...p,useCx,useW,scale,xRel:x,zRel:z,alpha,trust,capturedAt:state.time};
+        s.frameErr=alpha;
+        s.targetHeading=state.heading+alpha;
+      }
+    } else {
+      const scale=p.w/C.pinW, target=160+C.lateral*scale, error=p.cx-target;
+      s.frame={...p,useCx:p.cx,useW:p.w,scale,xRel:(p.cx-160)/scale-C.lateral,zRel:focal/scale+C.back,alpha:Math.atan2((p.cx-160)/scale-C.lateral,focal/scale+C.back)/rad,trust:true,error,capturedAt:state.time};
+    }
+  }
+  function step(dt) {
+    if (s.demoStopped) return;
+    s.time+=dt*1000;
+    if (sweep && mode==='track') pin.x=-14+12*Math.sin(s.time/1000*.8);
+    s.history.push({x:s.x,y:s.y,heading:s.heading,time:s.time});
+    while (s.history.length>90) s.history.shift();
+    if (s.time>=s.nextFrame) { newFrame(); s.nextFrame=s.time+50; }
+    const missing=s.time-s.lastSeen;
+    if (missing>=80) s.hasPin=false;
+    if (mode==='track') {
+      if (missing>=C.memoryMs) s.targetHeading=null;
+      s.memory=!s.hasPin&&s.targetHeading!==null;
+      const err=s.targetHeading===null?0:s.targetHeading-s.heading;
+      if (s.targetHeading===null || Math.abs(err)<=C.deadband) s.desired=0;
+      else {
+        const q=(Math.abs(err)-C.deadband)/(C.fullErr-C.deadband);
+        let mag=C.minTurn+(C.maxTurn-C.minTurn)*bezier(q);
+        if(s.memory) mag=Math.min(mag,C.memoryMax);
+        const dir=err>0?1:-1;
+        if(dir<0) mag*=C.ccw;
+        s.desired=dir*Math.min(mag,127);
+      }
+      const slowing=Math.abs(s.desired)<Math.abs(s.turn)||s.desired*s.turn<0;
+      const accel=s.desired<0?C.accel*C.ccw:C.accel;
+      const maxStep=(slowing?C.decel:accel)*dt;
+      s.turn+=clamp(s.desired-s.turn,-maxStep,maxStep);
+      s.heading+=s.turn*2.35*dt; // illustrative drivetrain response; code commands motors, not angular speed
+    } else {
+      s.memory=!s.hasPin&&s.locked;
+      if (!s.locked && s.frame && s.hasPin) {
+        s.turn=Math.abs(s.frame.error)<C.pixelDeadband?0:clamp(C.steerKp*s.frame.error,-C.steerMax,C.steerMax);
+      } else if(!s.locked && missing>=80) {
+        s.locked=true; s.lockHeading=s.heading; s.lockTime=s.time; s.lockX=s.x; s.lockY=s.y;
+      }
+      if(s.locked) s.turn=clamp(2*(s.lockHeading-s.heading),-C.steerMax,C.steerMax);
+      const speed=C.driveSpeed/127*46; // illustrative in/s conversion
+      const th=s.heading*rad;
+      s.x-=Math.sin(th)*speed*dt; s.y-=Math.cos(th)*speed*dt;
+      s.heading+=s.turn*2.1*dt;
+      if (Math.hypot(pin.x-s.x,pin.y-s.y)<17 || s.time>4600 || (s.locked && (s.time-s.lockTime>750 || Math.hypot(s.x-s.lockX,s.y-s.lockY)>6))) s.demoStopped=true;
+    }
+    if (s.time%45<dt*1000) { s.trail.push([s.x,s.y]); if(s.trail.length>200)s.trail.shift(); }
+  }
+  function render() {
+    const f=s.frame, scale=f?f.scale:0, target=f?160+C.lateral*scale:160;
+    const w=f?f.w:0, cx=f?f.cx:160, left=f?f.left:160, boxH=clamp(w*2.35,35,150), boxY=120-boxH/2;
+    const cameraLost=!s.hasPin && s.time>100;
+    $('cameraScene').dataset.lost=String(cameraLost);
+    svg('pinBox','x',42+left); svg('pinBox','y',22+boxY); svg('pinBox','width',w); svg('pinBox','height',boxH);
+    svg('pinBox','opacity',cameraLost?.25:1);
+    svg('pinGraphic','transform',`translate(${42+cx} ${22+120}) scale(${clamp(w/39,.35,2.8)})`);
+    svg('pinGraphic','opacity',cameraLost?.18:1);
+    svg('centerDot','cx',42+cx); svg('centerDot','cy',142); svg('centerDot','opacity',cameraLost?.25:1);
+    svg('widthBracket','x1',42+left); svg('widthBracket','x2',42+left+w); svg('widthBracket','y1',15+boxY); svg('widthBracket','y2',15+boxY);
+    svg('bracketCaps','d',`M${42+left} ${11+boxY}v8 M${42+left+w} ${11+boxY}v8`);
+    svg('widthText','x',42+cx); svg('widthText','y',8+boxY); set('widthText',`w = ${fmt(w,0)} px`);
+    svg('targetLine','x1',42+target); svg('targetLine','x2',42+target);
+    svg('targetLabel','x',clamp(45+target,47,285));
+    svg('pixelError','d',`M${42+target} 214H${42+cx}`);
+    svg('errorText','x',42+(target+cx)/2); set('errorText',`Δu = ${fmt(cx-target,1)} px`);
+    set('cameraState',cameraLost?'PIN NOT VISIBLE':'CLASS 3 · DETECTED'); svg('cameraState','fill',cameraLost?'#ff7f8f':'#74e2ba');
+    set('boxWidth',f?`${fmt(w,1)} px`:'— px'); set('boxCenter',f?`${fmt(cx,1)} px`:'— px'); set('targetColumn',f?`${fmt(target,1)} px`:'— px'); set('pixelErr',f?`${fmt(cx-target,1)} px`:'— px');
+    const bodyAngle=s.heading;
+    svg('robotOnMap','transform',`translate(${s.x} ${-s.y}) rotate(${bodyAngle})`);
+    svg('pinOnMap','transform',`translate(${pin.x} ${-pin.y})`);
+    svg('trail','points',s.trail.map(p=>`${fmt(p[0],2)},${fmt(-p[1],2)}`).join(' '));
+    svg('targetRay','d',`M${s.x} ${-s.y}L${pin.x} ${-pin.y}`);
+    const th=s.heading*rad;
+    const dx=pin.x-s.x, dy=pin.y-s.y;
+    const z=-Math.sin(th)*dx-Math.cos(th)*dy;
+    const x=-Math.cos(th)*dx+Math.sin(th)*dy;
+    const footX=s.x-z*Math.sin(th), footY=s.y-z*Math.cos(th);
+    svg('depthLeg','d',`M${s.x} ${-s.y}L${footX} ${-footY}`);
+    svg('lateralLeg','d',`M${footX} ${-footY}L${pin.x} ${-pin.y}`);
+    svg('depthLegLabel','x',s.x+(footX-s.x)*.45+1); svg('depthLegLabel','y',-s.y+(-footY+s.y)*.45-1); set('depthLegLabel',`z = ${fmt(z,1)} in`);
+    svg('lateralLegLabel','x',(footX+pin.x)/2-3); svg('lateralLegLabel','y',(-footY-pin.y)/2-1); set('lateralLegLabel',`x = ${fmt(x,1)} in`);
+    svg('centerlineRay','d',`M${s.x} ${-s.y}L${s.x-31*Math.sin(th)} ${-s.y+31*Math.cos(th)}`);
+    svg('headingLabel','x',clamp(s.x+11,-34,31)); svg('headingLabel','y',clamp(-s.y-12,-40,38)); set('headingLabel',`θ = ${fmt(s.heading,1)}°`);
+    const err=mode==='track'?(s.targetHeading===null?0:s.targetHeading-s.heading):(f?f.error:0);
+    const leftMotor=s.demoStopped?0:mode==='track'?s.turn:Math.min(0,-C.driveSpeed+s.turn), rightMotor=s.demoStopped?0:mode==='track'?-s.turn:Math.min(0,-C.driveSpeed-s.turn);
+    set('turnAngle',f?`${fmt(f.alpha,1)}°`:'—°'); set('headingError',`${fmt(err,1)}${mode==='track'?'°':' px'}`);
+    set('motors',`${fmt(leftMotor,0)} / ${fmt(rightMotor,0)}`);
+    set('pose',`(${fmt(s.x,0)}, ${fmt(s.y,0)})`);
+    const state=s.demoStopped?'DEMO PAUSED BEFORE PIN':s.memory?'IMU MEMORY':s.hasPin?'CLASS 3 LOCKED':'ACQUIRING PIN';
+    set('status',state); $('status').style.color=s.memory?'var(--yellow)':s.hasPin?'var(--green)':'var(--red)';
+    if (f) {
+      set('value1',`u = ${fmt(f.left,1)} + ${fmt(f.w,1)}/2 = ${fmt(f.cx,1)} px`);
+      set('value2',`s = ${fmt(f.useW,1)}/3 = ${fmt(f.useW/3,2)} px/in · f = ${fmt(focal,1)} px`);
+      set('value3',`x = ${fmt(f.xRel,2)} in · z = ${fmt(f.zRel,2)} in · α = ${fmt(f.alpha,2)}°`);
+      set('value4',mode==='track'?`θ* = ${s.targetHeading===null?'—':fmt(s.targetHeading,1)+'°'} · e = ${fmt(err,1)}° · T = ${fmt(s.turn,0)}`:`u* = ${fmt(target,1)} px · Δu = ${fmt(f.error,1)} px · T = ${fmt(s.turn,1)}`);
+    }
+  }
+  function setMode(next) {
+    mode=next; $('trackMode').classList.toggle('active',mode==='track'); $('driveMode').classList.toggle('active',mode==='drive');
+    $('mathTitle').textContent=mode==='track'?'The exact calculation · mode 2':'The exact calculation · backward approach';
+    $('formula4').innerHTML=mode==='track'?'θ* = θ(frame − 100 ms) + α<br>e = θ* − θ(now)<br>L = T; R = −T':'u* = 160 − 6.75s<br>Δu = u − u*<br>T = clamp(0.25Δu, ±35)<br>L = min(0, −50+T); R = min(0, −50−T)';
+    $('controlTitle').textContent=mode==='track'?'Why it stays steady':'How the backward curve is made';
+    $('controlText').innerHTML=mode==='track'?'Outside the 2° deadband, <code>q = clamp((|e|−2)/33, 0, 1)</code>; <code>B(q) = 3(1−q)²q(0.10) + 3(1−q)q²(0.90) + q³</code>; turn magnitude <code>10 + 35B(q)</code>. The command accelerates at 300 units/s and decelerates at 1500 units/s. Counterclockwise commands are ×2.5. Left and right are equal and opposite, so mode 2 rotates without translating.':'The active pickup calls drive both sides backward at 50/127 and add opposite steering corrections from <code>Δu</code>. The 3 px deadband prevents twitching. Each new frame recomputes the target column because pin width changes with range. If vision drops for 80 ms, the IMU holds the current heading; code then stops at its lost-distance, lost-time, maximum-distance, or timeout limits.';
+    reset();
+  }
+  $('trackMode').onclick=()=>setMode('track'); $('driveMode').onclick=()=>setMode('drive');
+  $('playButton').onclick=()=>{ playing=!playing; set('playButton',playing?'Pause':'Play'); $('playButton').setAttribute('aria-label',playing?'Pause animation':'Play animation'); };
+  $('resetButton').onclick=()=>reset();
+  $('sweepButton').onclick=()=>{ if(mode!=='track')setMode('track'); sweep=!sweep; set('sweepButton',sweep?'Stop sweep':'Sweep pin'); };
+  $('hideButton').onclick=()=>{ hiddenUntil=s.time+1000; s.hasPin=false; };
+  const map=$('map');
+  map.addEventListener('pointerdown',e=>{ dragging=true; map.setPointerCapture(e.pointerId); movePin(e); });
+  map.addEventListener('pointermove',e=>{ if(dragging)movePin(e); });
+  map.addEventListener('pointerup',()=>dragging=false);
+  function movePin(e) { sweep=false; set('sweepButton','Sweep pin'); const point=map.createSVGPoint(); point.x=e.clientX; point.y=e.clientY; const p=point.matrixTransform(map.getScreenCTM().inverse()); pin.x=clamp(p.x,-42,42); pin.y=clamp(-p.y,-42,42); if(s.demoStopped)s.demoStopped=false; }
+  let last=performance.now(), accumulator=0;
+  function tick(now) {
+    const realDt=Math.min((now-last)/1000,.06); last=now;
+    if (playing) { accumulator+=realDt; while(accumulator>=.01){step(.01);accumulator-=.01;} render(); }
+    requestAnimationFrame(tick);
+  }
+  reset(); requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
