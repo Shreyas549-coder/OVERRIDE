@@ -72,15 +72,55 @@ pros::Rotation verticalEnc(-18);
 pros::Rotation liftRot(13);
 
 
-lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_2, 0);
+// Third argument is the SIDEWAYS distance from the tracking centre to the
+// wheel, positive to the right. Measured with a ruler: the wheel sits about
+// half an inch LEFT of the centre line, so -0.5. It was 0, which told odometry
+// the wheel was dead centre; a wheel that is off centre sweeps an arc during
+// every turn and reports it as forward travel the robot never made. At 0.5 in
+// that is about 1.6 in of phantom travel per 180 deg turn.
+//
+// The spin-in-place test does NOT measure this: over a full 360 the false
+// travel points in every direction in turn and very nearly cancels, which is
+// why 3 rotations only drifted 2.7 in. Partial turns are where it shows up.
+lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_2, -0.5);
 
 
 lemlib::Drivetrain drivetrain(&leftMotors, &rightMotors, 14,
                              lemlib::Omniwheel::OLD_325, 333, 8);
 
 
+// ControllerSettings(kP, kI, kD, windupRange, smallError, smallErrorTimeout,
+//                    largeError, largeErrorTimeout, slew)
+//
+// Linear is unchanged and measured good: 6 reps of a 24 in drive gave
+// worst 0.62 in, avg 0.38 in. Nothing to gain by touching it.
 lemlib::ControllerSettings linearController(7, 0, 18, 3, 1, 100, 3, 500, 10);
-lemlib::ControllerSettings angularController(1, 0, 0.05, 3, 1, 100, 3, 500, 0);
+
+// Angular: kP was 1 and kD was 0.05, which is effectively no damping and far
+// too little authority. At kP 1 a 3 deg error commands an output of 3 out of
+// 127, below what it takes to break stiction, so the turn stalls a few degrees
+// short and exits on the 3 deg / 500 ms large-error window instead of finishing.
+// Three degrees of heading is about 1.3 in of lateral miss over 24 in of travel,
+// which is what the pin pickups were losing.
+lemlib::ControllerSettings angularController(4.0, 0, 21, 3, 1, 100, 1.5, 500, 0);
+//                                                            largeError ^^^  was 3
+//                                           ^^^     ^^  were kP 1, kD 0.05
+// kP history: 1 (original) -> 2.5 -> 4.0. At 2.5 it finished a consistent
+// 2.2 deg short every rep (worst 2.54, avg 2.19): inside the 3 deg exit window
+// but with only ~5/127 of output left, too little to break stiction and close it.
+// kD history: 0.05 (original) -> 12 -> 18 -> 24. At kP 4.0 / kD 12 the turn
+// carried past the target on momentum and pulled back (worst 1.88, avg 1.63);
+// kD is the term that starts braking before the target instead of at it.
+// Measured, 6 reps of a 90 deg turn each time, same start:
+//   kP 2.5 / kD 12  worst 2.54  avg 2.19   stalls short, no authority left
+//   kP 4.0 / kD 12  worst 1.88  avg 1.63   overshoots on momentum, pulls back
+//   kP 4.0 / kD 18  worst 1.35  avg 0.91   less overshoot
+//   kP 4.0 / kD 24  worst 1.25  avg 0.72   but shook on ~1 run in 5
+//   kP 4.0 / kD 21  worst 0.66  avg 0.34   FINAL, and better than 24 on both
+// 21 beat 24 outright: past the noise boundary the extra gain was fighting IMU
+// noise, not momentum. Raising kD further trades overshoot for buzz.
+// If turns ever feel too violent, limit acceleration with the slew field (last
+// argument, currently 0) rather than adding more kD.
 
 
 lemlib::OdomSensors sensors(&vertical, nullptr, nullptr, nullptr, &imu);
@@ -454,7 +494,7 @@ const double AIV_MIN_WIDTH_PX    = 6.0;    // ignore specks narrower than this
 // ---- driving ----
 const double AIV_DRIVE_SPEED     = 60;     // move() units, always applied backward
 const double AIV_KP              = 0.25;   // move() units per pixel of error
-const double AIV_STEER_MAX       = 20;     // steering clamp
+const double AIV_STEER_MAX       = 35;     // steering clamp
 const double AIV_DEADBAND_PX     = 3.0;    // no steering inside this
 const int    AIV_STEER_SIGN      = 1;      // flip to -1 if it steers away from the pin
 const double AIV_KH              = 2.0;    // heading hold gain, move() units per degree
@@ -1228,8 +1268,8 @@ const double ARM_TARGET_TOLERANCE = 4.0;
 const int32_t ARM_MAX_VOLTAGE = 12000;
 const int32_t ARM_MEDIUM_VOLTAGE = 12000;
 const int32_t ARM_APPROACH_VOLTAGE = 12000;
-const int32_t ARM_FINAL_VOLTAGE = 3000;
-const int32_t ARM_HOLD_VOLTAGE = 4500;
+const int32_t ARM_FINAL_VOLTAGE = 2500;
+const int32_t ARM_HOLD_VOLTAGE = 3500;
 
  void moveArmAutonWithLiftTrigger(double targetAngle, double liftPeakAngle, int timeoutMs = 3000) {
     // The arm has only two valid targets.
@@ -1734,7 +1774,7 @@ void autonomous() {
 #endif   // old v1 pin tracker
 
 #else
-
+/*
    liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
@@ -1749,27 +1789,27 @@ void autonomous() {
    // Toggle roller while the claw runs.
 
    setLiftTarget(145);
-   chassis.moveToPoint(0, 8, 750, {.forwards=false, .minSpeed = 33});
+   chassis.moveToPoint(0, 8, 1000, {.forwards=false, .minSpeed = 33});   // timeout was 750
    chassis.waitUntilDone();
    
    setLiftTarget(0);
-   chassis.turnToHeading(0, 1000, {.maxSpeed=60});
+   chassis.turnToHeading(0, 4500, {.maxSpeed=60});   // timeout was 1000
    
-   chassis.moveToPoint(0, -5, 1000, {.forwards = false, .minSpeed = 33});
+   chassis.moveToPoint(0, -5, 1250, {.forwards = false, .minSpeed = 33});   // timeout was 1000
   
 
 
-   chassis.moveToPoint(5, 18, 1000, {.maxSpeed = 60});
+   chassis.moveToPoint(5, 18, 3000, {.maxSpeed = 60});   // timeout was 1000
    chassis.waitUntil(4);
     moveArmAuton(-90);
    
-   chassis.turnToHeading(235, 1000);
+   chassis.turnToHeading(235, 2000);   // timeout was 1000
    chassis.waitUntilDone();
    aivSetDriveSpeed(50);
-AivEnd pinEnd = driveBackToPin(100, 10000, 50, 6, 750);
+AivEnd pinEnd = driveBackToPin(48, 10000, 50, 6, 750);
 pros::delay(500);
 
-   chassis.turnToHeading(180, 500);
+   chassis.turnToHeading(180, 1250);   // timeout was 500
     moveArmAuton(90);
     setLiftTarget(60);
     chassis.moveToPoint(26, 24, 2500, {.maxSpeed = 60});
@@ -1782,17 +1822,17 @@ pros::delay(500);
     chassis.waitUntil(3);
     claw.move_voltage(12000);
     moveArmAuton(-90);
-    chassis.turnToHeading(305, 1000);
+    chassis.turnToHeading(305, 2000);   // timeout was 1000
     chassis.waitUntilDone();
    aivSetDriveSpeed(50);
-    AivEnd pinEnd2 = driveBackToPin(1000, 10000, 50, 6, 1000);
+    AivEnd pinEnd2 = driveBackToPin(30, 10000, 50, 6, 1000);
     pros::delay(500);
-    chassis.turnToHeading(0, 500);
-    chassis.moveToPoint(50, 12, 1000, {.maxSpeed = 60});
-    chassis.turnToHeading(-90, 500);
+    chassis.turnToHeading(0, 1250);   // timeout was 500
+    chassis.moveToPoint(50, 13, 4000, {.maxSpeed = 60});   // timeout was 1000
+    chassis.turnToHeading(-90, 1750);   // timeout was 500
     moveArmAuton(90);
     setLiftTarget(100);
-    chassis.moveToPoint(24, 12, 1000, {.maxSpeed = 60});
+    chassis.moveToPoint(24, 13, 3250, {.maxSpeed = 60});   // timeout was 1000
     chassis.waitUntilDone();
     
     setLiftTarget(60);
@@ -1802,89 +1842,139 @@ pros::delay(500);
     claw.move_voltage(-12000);
     chassis.moveToPoint(27, 12, 1000, {.forwards=false, .maxSpeed = 50});
     pros::delay(1200);
+*/
 
+liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+   liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+
+   liftAutonomousMode = true;
+   enableLiftPID();
+/*
+   chassis.setPose(0, 0, 180);
+   
+   
+   claw.move_voltage(12000);
+
+   // Toggle roller while the claw runs.
+
+   setLiftTarget(145);
+   chassis.moveToPoint(0, 8, 750, {.forwards=false, .minSpeed = 33});
+   moveArmAuton(90);
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   chassis.turnToHeading(0, 750, {.maxSpeed=60});
+   chassis.moveToPoint(0, -4, 1500, {.forwards = false, .minSpeed = 33});
+   pros::delay(500);
+   moveArmAuton(-90);
+
+
+   chassis.moveToPoint(5, 18, 1000, {.maxSpeed = 60});
+   
+   chassis.turnToHeading(225, 1000);
+    chassis.moveToPoint(31, 43, 3000, {.forwards=false, .maxSpeed = 50});
+    chassis.turnToHeading(180, 500);
+    moveArmAuton(90);
+    setLiftTarget(60);
+    chassis.moveToPoint(26, 24, 1000, {.maxSpeed = 60});
+    chassis.waitUntilDone();
+    setLiftTarget(0);
+    pros::delay(750);
+    claw.move_voltage(-12000);
+    pros::delay(500);
+    chassis.moveToPoint(24, 35, 3000, {.forwards=false, .maxSpeed = 50});
+    chassis.waitUntil(3);
+    claw.move_voltage(12000);
+    moveArmAuton(-90);
+    chassis.turnToHeading(315, 500);
+    chassis.moveToPoint(57, 5, 5000, {.forwards=false, .maxSpeed = 50});
+    pros::delay(500);
+    chassis.moveToPoint(47, 14, 5000, {.maxSpeed = 50});
+    chassis.turnToHeading(-90, 500);
+    moveArmAuton(90);
+    setLiftTarget(100);
+    chassis.moveToPoint(24, 14, 1000, {.maxSpeed = 60});
+    chassis.waitUntilDone();
+    setLiftTarget(60);
+    pros::delay(500);
+    claw.move_voltage(-12000);
+    pros::delay(2000);
+    */
    //standalone skills
 
    //return to loader
    
 chassis.setPose(-47.223, -34.389, 0);
-chassis.moveToPoint(-47.223, -34.389-20, 1500, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.moveToPoint(-47.223, -34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 chassis.waitUntil(4);
 setLiftTarget(0);
 claw.move_voltage(12000);
 moveArmAuton(-90);
-chassis.turnToHeading(90, 1000);
-chassis.moveToPoint(-46.223-13,-34.389-20, 1500, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.turnToHeading(90, 1750);   // timeout was 1000
+chassis.moveToPoint(-46.223-13,-34.389-26, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 chassis.waitUntil(6);
     claw.move_voltage(12000);
 pros::delay(1000);
+
 //third pin
 chassis.setPose(-62.253, -58.81, 90);
 
-chassis.moveToPoint(-62.253+12, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
-chassis.turnToHeading(0, 1000);
+chassis.moveToPoint(-62.253+13, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
+chassis.turnToHeading(0, 1750);   // timeout was 1000
 moveArmAuton(90);
-setLiftTarget(160);
-chassis.moveToPoint(-62.253+13, -58.81+27, 2000, {.maxSpeed=50, .minSpeed=30});
-chassis.waitUntilDone();
-setLiftTarget(110);
+setLiftTarget(170);
+chassis.moveToPoint(-62.253+14, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
+setLiftTarget(120);
  pros::delay(1000);
    claw.move_voltage(-12000);
    pros::delay(1000);
 
 //return to loader
 chassis.setPose(-47.223, -34.389, 0);
-chassis.moveToPoint(-47.223, -34.389-21, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
-
-chassis.waitUntil(8);
-setLiftTarget(0);
-claw.move_voltage(12000);
-moveArmAuton(-90);
-
-
-pros::delay(2000);
-moveArmAuton(-90);
-chassis.turnToHeading(90, 1000);
-chassis.moveToPoint(-46.223-13,-34.389-21.5, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
-chassis.waitUntil(6);
-    claw.move_voltage(12000);
-pros::delay(1000);
-
-//pin 4
-chassis.setPose(-62.253, -58.81, 90);
-chassis.moveToPoint(-62.253+12, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
-chassis.turnToHeading(-5, 1000);
-moveArmAuton(90);
-setLiftTarget(200);
-chassis.moveToPoint(-62.253+14, -58.81+27, 2000, {.maxSpeed=50, .minSpeed=30});
-
-chassis.waitUntilDone();
-setLiftTarget(150);
- pros::delay(1000);
-   claw.move_voltage(-12000);
-   pros::delay(1000);
-   claw.move_voltage(0);
-
-//back to loader
-chassis.setPose(-47.223, -34.389, 0);
-chassis.moveToPoint(-47.223, -34.389-22, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.moveToPoint(-47.223, -34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 chassis.waitUntil(4);
 setLiftTarget(0);
 claw.move_voltage(12000);
 moveArmAuton(-90);
-chassis.turnToHeading(90, 1000);
-chassis.moveToPoint(-46.223-14,-34.389-22.5, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.turnToHeading(90, 1750);   // timeout was 1000
+chassis.moveToPoint(-46.223-13,-34.389-26, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
+chassis.waitUntil(6);
+    claw.move_voltage(12000);
+pros::delay(1000);
+
+//fourth pin
+chassis.setPose(-62.253, -58.81, 90);
+
+chassis.moveToPoint(-62.253+13, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
+chassis.turnToHeading(0, 1750);   // timeout was 1000
+moveArmAuton(90);
+setLiftTarget(170);
+chassis.moveToPoint(-62.253+14, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
+setLiftTarget(120);
+ pros::delay(1000);
+   claw.move_voltage(-12000);
+   pros::delay(1000);
+
+//back to loader
+chassis.setPose(-47.223, -34.389, 0);
+chassis.moveToPoint(-47.223, -34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
+chassis.waitUntil(4);
+setLiftTarget(0);
+claw.move_voltage(12000);
+moveArmAuton(-90);
+chassis.turnToHeading(90, 1750);   // timeout was 1000
+chassis.moveToPoint(-46.223-13,-34.389-26, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 chassis.waitUntil(6);
     claw.move_voltage(12000);
 pros::delay(1000);
 
 
+
 chassis.setPose(0,0,0);
-chassis.moveToPoint(0, 15, 2000, {.maxSpeed=50});
-chassis.turnToHeading(-90, 1000);
+chassis.moveToPoint(0, 15, 2500, {.maxSpeed=50});   // timeout was 2000
+chassis.turnToHeading(-90, 1750);   // timeout was 1000
 chassis.moveToPoint(-10, 15, 2000, {.maxSpeed=50});
-chassis.turnToHeading(-45, 1000);
-chassis.moveToPoint(-50, 62, 4000, {.maxSpeed=50});
+chassis.turnToHeading(-45, 1250);   // timeout was 1000
+chassis.moveToPoint(-50, 62, 8000, {.maxSpeed=50});   // timeout was 4000
 moveArmAuton(90);
 setLiftTarget(90);
 chassis.waitUntilDone();
@@ -1894,8 +1984,109 @@ setLiftTarget(40);
    pros::delay(1000);
    claw.move_voltage(0);
    
+/*
 
-#endif
+
+
+   // =====================================================================
+   // PID TUNING TEST  (AUTON_MODE 0)
+   // =====================================================================
+   // Repeats one motion several times from the same start and reports how far
+   // off it finished each time. Tune against the SPREAD of the numbers, not a
+   // single run: one run cannot tell a gain problem from a bad launch.
+   //
+   //   TUNE_TEST 0 = turn test      (tune angularController with this)
+   //   TUNE_TEST 1 = straight drive (tune linearController, only after turns)
+   //   TUNE_TEST 2 = spin in place  (measures the tracking wheel offset)
+   //
+   // TEST 2: a full 360 moves the robot nowhere, so any position the odometry
+   // reports afterwards is error from the vertical tracking wheel's offset
+   // being wrong. A wheel mounted d inches off the centre line sweeps an arc of
+   // 2*pi*d per rotation, so  offset = drift / (2*pi*rotations).  Put that
+   // number in the third argument of the TrackingWheel constructor.
+   //
+   // Controller screen, after each rep:  "n) err <degrees or inches>"
+   // At the end:                         "worst <x>  avg <x>"  + a rumble.
+   // =====================================================================
+   const int      TUNE_TEST      = 0;      // 0 = turns, 1 = drive, 2 = spin
+   const int      TUNE_REPS      = 6;      // test 0/1: even number. test 2: full rotations
+   const double   TUNE_TURN_DEG  = 90.0;   // turn test: swings between 0 and this
+   const double   TUNE_DRIVE_IN  = 24.0;   // drive test: moves between 0 and this
+   const int      TUNE_DRIVE_SPD = 90;     // drive test: maxSpeed
+   const uint32_t TUNE_PAUSE_MS  = 1200;   // settle time before each reading
+
+   // Nothing but the drivetrain moves during a tuning run.
+   liftAutonomousMode = false;
+   liftPIDEnabled     = false;
+   liftLeft.brake();
+   liftRight.brake();
+   claw.brake();
+
+   auto tuneWrap = [](double a) {
+       while (a >  180.0) a -= 360.0;
+       while (a < -180.0) a += 360.0;
+       return a;
+   };
+
+   chassis.setPose(0, 0, 0);
+   pros::delay(500);
+
+   double tuneWorst = 0, tuneSum = 0;
+   double tuneSpinDrift = 0;   // TEST 2: inches the pose has wandered from the origin
+
+   for (int i = 0; i < TUNE_REPS; i++) {
+       double err = 0;
+
+       if (TUNE_TEST == 0) {
+           const double target = (i % 2 == 0) ? TUNE_TURN_DEG : 0.0;
+           chassis.turnToHeading(target, 4000);
+           chassis.waitUntilDone();
+           pros::delay(TUNE_PAUSE_MS);
+           err = tuneWrap(target - chassis.getPose().theta);
+       }
+       else if (TUNE_TEST == 1) {
+           const double target = (i % 2 == 0) ? TUNE_DRIVE_IN : 0.0;
+           chassis.moveToPoint(0, target, 5000, {.maxSpeed = TUNE_DRIVE_SPD});
+           chassis.waitUntilDone();
+           pros::delay(TUNE_PAUSE_MS);
+           err = target - chassis.getPose().y;
+       }
+       else {
+           // One full rotation, in four quarter turns so turnToHeading always
+           // has somewhere to go. Net rotation is 360, net travel is zero.
+           for (int q = 1; q <= 4; q++) {
+               chassis.turnToHeading(tuneWrap(q * 90.0), 4000);
+               chassis.waitUntilDone();
+           }
+           pros::delay(TUNE_PAUSE_MS);
+           const lemlib::Pose sp = chassis.getPose();
+           tuneSpinDrift = std::hypot(sp.x, sp.y);   // cumulative, never reset
+           err = tuneSpinDrift;
+       }
+
+       const double mag = std::fabs(err);
+       tuneSum += mag;
+       if (mag > tuneWorst) tuneWorst = mag;
+
+       controller.print(0, 0, "%d) err %+.2f    ", i + 1, err);
+       pros::delay(600);          // controller.print needs room between writes
+   }
+
+   controller.print(1, 0, "worst %.2f avg %.2f ",
+                    tuneWorst, tuneSum / (double)TUNE_REPS);
+   if (TUNE_TEST == 2) {
+       pros::delay(600);
+       controller.print(2, 0, "offset %.3f in   ",
+                        tuneSpinDrift / (2.0 * 3.14159265358979 * TUNE_REPS));
+   }
+   controller.rumble(".");
+   leftMotors.brake();
+   rightMotors.brake();
+
+   */
+
+   #endif
+
 }
 
 
