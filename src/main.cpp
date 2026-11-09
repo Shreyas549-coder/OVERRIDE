@@ -43,7 +43,7 @@
 // detection type from it, and the screen task switches its layout on it. All
 // three have to agree.
 // =====================================================================
-#define AUTON_MODE 2
+#define AUTON_MODE 0
 
 
 // controller
@@ -437,11 +437,11 @@ const int    AIV_YELLOW_SIG_ID   = 1;      // color signature ID for yellow (1-7
 const bool   AIV_SET_COLOR_IN_CODE = true; // true = this program defines the yellow signature itself
                                            // false = use whatever the AI Vision utility saved
 const bool   AIV_USE_GAME_MODEL  = true;   // true = game element AI model, false = color signature
-const int    AIV_PIN_CLASS_ID    = 3;      // class ID of the pin in the game model (found with AUTON_MODE 1)
+const int    AIV_PIN_CLASS_ID    = 4;      // class ID of the pin in the game model (found with AUTON_MODE 1)
                                            // used when AIV_USE_GAME_MODEL is true
 
 // ---- geometry ----
-const double AIV_CAMERA_OFFSET_LEFT_IN = -6.75;  // camera is this far LEFT of drivetrain center, seen from behind
+const double AIV_CAMERA_OFFSET_LEFT_IN = -6.9;  // camera is this far LEFT of drivetrain center, seen from behind
 const double AIV_PIN_WIDTH_IN    = 3.0;    // TODO measure: real width of the yellow blob the sensor boxes
 const double AIV_IMAGE_WIDTH_PX  = 320.0;  // AI Vision image is 320 x 240
 const double AIV_IMAGE_CENTER_PX = AIV_IMAGE_WIDTH_PX / 2.0;
@@ -454,7 +454,7 @@ const double AIV_MIN_WIDTH_PX    = 6.0;    // ignore specks narrower than this
 // ---- driving ----
 const double AIV_DRIVE_SPEED     = 60;     // move() units, always applied backward
 const double AIV_KP              = 0.25;   // move() units per pixel of error
-const double AIV_STEER_MAX       = 35;     // steering clamp
+const double AIV_STEER_MAX       = 20;     // steering clamp
 const double AIV_DEADBAND_PX     = 3.0;    // no steering inside this
 const int    AIV_STEER_SIGN      = 1;      // flip to -1 if it steers away from the pin
 const double AIV_KH              = 2.0;    // heading hold gain, move() units per degree
@@ -1228,8 +1228,8 @@ const double ARM_TARGET_TOLERANCE = 4.0;
 const int32_t ARM_MAX_VOLTAGE = 12000;
 const int32_t ARM_MEDIUM_VOLTAGE = 12000;
 const int32_t ARM_APPROACH_VOLTAGE = 12000;
-const int32_t ARM_FINAL_VOLTAGE = 2500;
-const int32_t ARM_HOLD_VOLTAGE = 3000;
+const int32_t ARM_FINAL_VOLTAGE = 3000;
+const int32_t ARM_HOLD_VOLTAGE = 4500;
 
  void moveArmAutonWithLiftTrigger(double targetAngle, double liftPeakAngle, int timeoutMs = 3000) {
     // The arm has only two valid targets.
@@ -1746,15 +1746,15 @@ void autonomous() {
    chassis.setPose(0, 0, 180);
    claw.move_voltage(12000);
 
-
    // Toggle roller while the claw runs.
 
    setLiftTarget(145);
    chassis.moveToPoint(0, 8, 750, {.forwards=false, .minSpeed = 33});
-   moveArmAuton(90);
    chassis.waitUntilDone();
+   
    setLiftTarget(0);
-   chassis.turnToHeading(0, 750, {.maxSpeed=60});
+   chassis.turnToHeading(0, 1000, {.maxSpeed=60});
+   
    chassis.moveToPoint(0, -5, 1000, {.forwards = false, .minSpeed = 33});
   
 
@@ -1768,6 +1768,7 @@ void autonomous() {
    aivSetDriveSpeed(50);
 AivEnd pinEnd = driveBackToPin(100, 10000, 50, 6, 750);
 pros::delay(500);
+
    chassis.turnToHeading(180, 500);
     moveArmAuton(90);
     setLiftTarget(60);
@@ -1807,13 +1808,13 @@ pros::delay(500);
    //return to loader
    
 chassis.setPose(-47.223, -34.389, 0);
-chassis.moveToPoint(-47.223, -34.389-21, 1500, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.moveToPoint(-47.223, -34.389-20, 1500, {.forwards=false, .maxSpeed=50, .minSpeed=30});
 chassis.waitUntil(4);
 setLiftTarget(0);
 claw.move_voltage(12000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1000);
-chassis.moveToPoint(-46.223-13,-34.389-21, 1500, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.moveToPoint(-46.223-13,-34.389-20, 1500, {.forwards=false, .maxSpeed=50, .minSpeed=30});
 chassis.waitUntil(6);
     claw.move_voltage(12000);
 pros::delay(1000);
@@ -1826,14 +1827,14 @@ moveArmAuton(90);
 setLiftTarget(160);
 chassis.moveToPoint(-62.253+13, -58.81+27, 2000, {.maxSpeed=50, .minSpeed=30});
 chassis.waitUntilDone();
-setLiftTarget(120);
+setLiftTarget(110);
  pros::delay(1000);
    claw.move_voltage(-12000);
    pros::delay(1000);
 
 //return to loader
 chassis.setPose(-47.223, -34.389, 0);
-chassis.moveToPoint(-47.223, -34.389-22, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.moveToPoint(-47.223, -34.389-21, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
 
 chassis.waitUntil(8);
 setLiftTarget(0);
@@ -1844,7 +1845,7 @@ moveArmAuton(-90);
 pros::delay(2000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1000);
-chassis.moveToPoint(-46.223-13,-34.389-22.5, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
+chassis.moveToPoint(-46.223-13,-34.389-21.5, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});
 chassis.waitUntil(6);
     claw.move_voltage(12000);
 pros::delay(1000);
@@ -1882,8 +1883,8 @@ chassis.setPose(0,0,0);
 chassis.moveToPoint(0, 15, 2000, {.maxSpeed=50});
 chassis.turnToHeading(-90, 1000);
 chassis.moveToPoint(-10, 15, 2000, {.maxSpeed=50});
-chassis.turnToHeading(-20, 1000);
-chassis.moveToPoint(-55, 62, 4000, {.maxSpeed=50});
+chassis.turnToHeading(-45, 1000);
+chassis.moveToPoint(-50, 62, 4000, {.maxSpeed=50});
 moveArmAuton(90);
 setLiftTarget(90);
 chassis.waitUntilDone();
