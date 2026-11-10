@@ -82,7 +82,7 @@ pros::Rotation liftRot(13);
 // The spin-in-place test does NOT measure this: over a full 360 the false
 // travel points in every direction in turn and very nearly cancels, which is
 // why 3 rotations only drifted 2.7 in. Partial turns are where it shows up.
-lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_2, -0.5);
+lemlib::TrackingWheel vertical(&verticalEnc, 2, -0.5);
 
 
 lemlib::Drivetrain drivetrain(&leftMotors, &rightMotors, 14,
@@ -94,7 +94,7 @@ lemlib::Drivetrain drivetrain(&leftMotors, &rightMotors, 14,
 //
 // Linear is unchanged and measured good: 6 reps of a 24 in drive gave
 // worst 0.62 in, avg 0.38 in. Nothing to gain by touching it.
-lemlib::ControllerSettings linearController(7, 0, 18, 3, 1, 100, 3, 500, 10);
+lemlib::ControllerSettings linearController(6.5, 0, 28, 3, 1, 100, 3, 500, 10);
 
 // Angular: kP was 1 and kD was 0.05, which is effectively no damping and far
 // too little authority. At kP 1 a 3 deg error commands an output of 3 out of
@@ -102,7 +102,7 @@ lemlib::ControllerSettings linearController(7, 0, 18, 3, 1, 100, 3, 500, 10);
 // short and exits on the 3 deg / 500 ms large-error window instead of finishing.
 // Three degrees of heading is about 1.3 in of lateral miss over 24 in of travel,
 // which is what the pin pickups were losing.
-lemlib::ControllerSettings angularController(4.0, 0, 21, 3, 1, 100, 1.5, 500, 0);
+lemlib::ControllerSettings angularController(3.7, 0, 30, 3, 1, 100, 1.5, 500, 0);
 //                                                            largeError ^^^  was 3
 //                                           ^^^     ^^  were kP 1, kD 0.05
 // kP history: 1 (original) -> 2.5 -> 4.0. At 2.5 it finished a consistent
@@ -1849,7 +1849,8 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
    liftAutonomousMode = true;
    enableLiftPID();
-/*
+
+   /*
    chassis.setPose(0, 0, 180);
    
    
@@ -1871,7 +1872,7 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    chassis.moveToPoint(5, 18, 1000, {.maxSpeed = 60});
    
    chassis.turnToHeading(225, 1000);
-    chassis.moveToPoint(31, 43, 3000, {.forwards=false, .maxSpeed = 50});
+    chassis.moveToPoint(31, 44, 3000, {.forwards=false, .maxSpeed = 50});
     chassis.turnToHeading(180, 500);
     moveArmAuton(90);
     setLiftTarget(60);
@@ -1902,7 +1903,6 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    //standalone skills
 
    //return to loader
-   
 chassis.setPose(-47.223, -34.389, 0);
 chassis.moveToPoint(-47.223, -34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 chassis.waitUntil(4);
@@ -1910,9 +1910,7 @@ setLiftTarget(0);
 claw.move_voltage(12000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1750);   // timeout was 1000
-chassis.moveToPoint(-46.223-13,-34.389-26, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
-chassis.waitUntil(6);
-    claw.move_voltage(12000);
+chassis.moveToPoint(-46.223-13,-34.389-25, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 pros::delay(1000);
 
 //third pin
@@ -1923,7 +1921,8 @@ chassis.turnToHeading(0, 1750);   // timeout was 1000
 moveArmAuton(90);
 setLiftTarget(170);
 chassis.moveToPoint(-62.253+14, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
-setLiftTarget(120);
+chassis.waitUntilDone();
+setLiftTarget(110);
  pros::delay(1000);
    claw.move_voltage(-12000);
    pros::delay(1000);
@@ -1937,8 +1936,6 @@ claw.move_voltage(12000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1750);   // timeout was 1000
 chassis.moveToPoint(-46.223-13,-34.389-26, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
-chassis.waitUntil(6);
-    claw.move_voltage(12000);
 pros::delay(1000);
 
 //fourth pin
@@ -1947,9 +1944,10 @@ chassis.setPose(-62.253, -58.81, 90);
 chassis.moveToPoint(-62.253+13, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
 chassis.turnToHeading(0, 1750);   // timeout was 1000
 moveArmAuton(90);
-setLiftTarget(170);
+setLiftTarget(190);
 chassis.moveToPoint(-62.253+14, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
-setLiftTarget(120);
+chassis.waitUntilDone();
+setLiftTarget(150);
  pros::delay(1000);
    claw.move_voltage(-12000);
    pros::delay(1000);
@@ -1963,8 +1961,6 @@ claw.move_voltage(12000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1750);   // timeout was 1000
 chassis.moveToPoint(-46.223-13,-34.389-26, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
-chassis.waitUntil(6);
-    claw.move_voltage(12000);
 pros::delay(1000);
 
 
@@ -1974,7 +1970,7 @@ chassis.moveToPoint(0, 15, 2500, {.maxSpeed=50});   // timeout was 2000
 chassis.turnToHeading(-90, 1750);   // timeout was 1000
 chassis.moveToPoint(-10, 15, 2000, {.maxSpeed=50});
 chassis.turnToHeading(-45, 1250);   // timeout was 1000
-chassis.moveToPoint(-50, 62, 8000, {.maxSpeed=50});   // timeout was 4000
+chassis.moveToPoint(-59, 59, 8000, {.maxSpeed=50});   // timeout was 4000
 moveArmAuton(90);
 setLiftTarget(90);
 chassis.waitUntilDone();
