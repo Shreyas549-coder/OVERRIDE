@@ -1850,7 +1850,7 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    liftAutonomousMode = true;
    enableLiftPID();
 
-   /*
+   
    chassis.setPose(0, 0, 180);
    
    
@@ -1876,7 +1876,7 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     chassis.turnToHeading(180, 500);
     moveArmAuton(90);
     setLiftTarget(60);
-    chassis.moveToPoint(26, 24, 1000, {.maxSpeed = 60});
+    chassis.moveToPoint(26, 20, 1000, {.maxSpeed = 60});
     chassis.waitUntilDone();
     setLiftTarget(0);
     pros::delay(750);
@@ -1887,7 +1887,7 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     claw.move_voltage(12000);
     moveArmAuton(-90);
     chassis.turnToHeading(315, 500);
-    chassis.moveToPoint(57, 5, 5000, {.forwards=false, .maxSpeed = 50});
+    chassis.moveToPoint(52, 8, 3000, {.forwards=false, .maxSpeed = 50});
     pros::delay(500);
     chassis.moveToPoint(47, 14, 5000, {.maxSpeed = 50});
     chassis.turnToHeading(-90, 500);
@@ -1899,7 +1899,7 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     pros::delay(500);
     claw.move_voltage(-12000);
     pros::delay(2000);
-    */
+    
    //standalone skills
 
    //return to loader
@@ -1910,17 +1910,17 @@ setLiftTarget(0);
 claw.move_voltage(12000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1750);   // timeout was 1000
-chassis.moveToPoint(-46.223-13,-34.389-25, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
+chassis.moveToPoint(-46.223-18,-34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 pros::delay(1000);
 
 //third pin
 chassis.setPose(-62.253, -58.81, 90);
 
-chassis.moveToPoint(-62.253+13, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
+chassis.moveToPoint(-62.253+12, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
 chassis.turnToHeading(0, 1750);   // timeout was 1000
 moveArmAuton(90);
 setLiftTarget(170);
-chassis.moveToPoint(-62.253+14, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
+chassis.moveToPoint(-62.253+12, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
 chassis.waitUntilDone();
 setLiftTarget(110);
  pros::delay(1000);
@@ -1935,7 +1935,7 @@ setLiftTarget(0);
 claw.move_voltage(12000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1750);   // timeout was 1000
-chassis.moveToPoint(-46.223-13,-34.389-26, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
+chassis.moveToPoint(-46.223-18,-34.389-24, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 pros::delay(1000);
 
 //fourth pin
@@ -1960,7 +1960,7 @@ setLiftTarget(0);
 claw.move_voltage(12000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1750);   // timeout was 1000
-chassis.moveToPoint(-46.223-13,-34.389-26, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
+chassis.moveToPoint(-46.223-18,-34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 pros::delay(1000);
 
 
