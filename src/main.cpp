@@ -37,13 +37,14 @@
 //       tune the AIV_YELLOW_* numbers below. Read AIV_PIN_CLASS_ID off here.
 //   2 = Pin tracking demo. The robot rotates IN PLACE to keep the pin on the
 //       drivetrain centreline. It never drives forward or backward.
+//   3 = Empty autonomous branch for future testing.
 // Set back to 0 when you are done.
 //
 // This macro is read in three places, not just autonomous(): aivInit() picks the
 // detection type from it, and the screen task switches its layout on it. All
 // three have to agree.
 // =====================================================================
-#define AUTON_MODE 0
+#define AUTON_MODE 3
 
 
 // controller
@@ -1773,6 +1774,43 @@ void autonomous() {
 
 #endif   // old v1 pin tracker
 
+#elif AUTON_MODE == 3
+
+   liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+   liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+
+   liftAutonomousMode = true;
+   enableLiftPID();
+
+   
+   chassis.setPose(0, 0, 180);
+   claw.move_voltage(12000);
+   
+
+   // Toggle roller while the claw runs.
+
+   setLiftTarget(145);
+   chassis.moveToPoint(0, 8, 750, {.forwards=false, .minSpeed = 33});
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   chassis.turnToHeading(0, 750, {.maxSpeed=60});
+   chassis.moveToPoint(0, -7, 1500, {.forwards = false, .minSpeed = 33});
+   pros::delay(1000);
+
+
+   setLiftTarget(60);
+   //chassis.moveToPose(-24, 12, -90, 3000, {.lead = 0.4, .maxSpeed = 60, .minSpeed = 30});
+
+   chassis.moveToPoint(0, 15, 1000, {.maxSpeed = 60});
+    chassis.turnToHeading(-90, 750);
+    chassis.moveToPoint(-25, 15, 1000, {.maxSpeed = 60});
+
+   moveArmAuton(90);
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   pros::delay(750);
+   claw.move_voltage(-12000);
+
 #else
 /*
    liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
@@ -1853,8 +1891,6 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    
    chassis.setPose(0, 0, 180);
    
-   
-   claw.move_voltage(12000);
 
    // Toggle roller while the claw runs.
 
@@ -1865,14 +1901,16 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    setLiftTarget(0);
    chassis.turnToHeading(0, 750, {.maxSpeed=60});
    chassis.moveToPoint(0, -4, 1500, {.forwards = false, .minSpeed = 33});
-   pros::delay(500);
+   pros::delay(1000);
    moveArmAuton(-90);
 
 
    chassis.moveToPoint(5, 18, 1000, {.maxSpeed = 60});
    
    chassis.turnToHeading(225, 1000);
+   claw.move_voltage(12000);
     chassis.moveToPoint(31, 44, 3000, {.forwards=false, .maxSpeed = 50});
+    claw.move_voltage(12000);
     chassis.turnToHeading(180, 500);
     moveArmAuton(90);
     setLiftTarget(60);
@@ -1887,7 +1925,7 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     claw.move_voltage(12000);
     moveArmAuton(-90);
     chassis.turnToHeading(315, 500);
-    chassis.moveToPoint(52, 8, 3000, {.forwards=false, .maxSpeed = 50});
+    chassis.moveToPoint(52, 6, 3000, {.forwards=false, .maxSpeed = 50});
     pros::delay(500);
     chassis.moveToPoint(47, 14, 5000, {.maxSpeed = 50});
     chassis.turnToHeading(-90, 500);
@@ -1903,6 +1941,7 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    //standalone skills
 
    //return to loader
+   claw.move_voltage(0);
 chassis.setPose(-47.223, -34.389, 0);
 chassis.moveToPoint(-47.223, -34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 chassis.waitUntil(4);
@@ -1916,11 +1955,11 @@ pros::delay(1000);
 //third pin
 chassis.setPose(-62.253, -58.81, 90);
 
-chassis.moveToPoint(-62.253+12, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
+chassis.moveToPoint(-62.253+13, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
 chassis.turnToHeading(0, 1750);   // timeout was 1000
 moveArmAuton(90);
 setLiftTarget(170);
-chassis.moveToPoint(-62.253+12, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
+chassis.moveToPoint(-62.253+13, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
 chassis.waitUntilDone();
 setLiftTarget(110);
  pros::delay(1000);
@@ -1935,7 +1974,7 @@ setLiftTarget(0);
 claw.move_voltage(12000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1750);   // timeout was 1000
-chassis.moveToPoint(-46.223-18,-34.389-24, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
+chassis.moveToPoint(-46.223-18,-34.389-25, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 pros::delay(1000);
 
 //fourth pin
@@ -1945,7 +1984,7 @@ chassis.moveToPoint(-62.253+13, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
 chassis.turnToHeading(0, 1750);   // timeout was 1000
 moveArmAuton(90);
 setLiftTarget(190);
-chassis.moveToPoint(-62.253+14, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
+chassis.moveToPoint(-62.253+13, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
 chassis.waitUntilDone();
 setLiftTarget(150);
  pros::delay(1000);
@@ -1960,7 +1999,7 @@ setLiftTarget(0);
 claw.move_voltage(12000);
 moveArmAuton(-90);
 chassis.turnToHeading(90, 1750);   // timeout was 1000
-chassis.moveToPoint(-46.223-18,-34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
+chassis.moveToPoint(-46.223-17.5,-34.389-25, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
 pros::delay(1000);
 
 
@@ -1970,15 +2009,13 @@ chassis.moveToPoint(0, 15, 2500, {.maxSpeed=50});   // timeout was 2000
 chassis.turnToHeading(-90, 1750);   // timeout was 1000
 chassis.moveToPoint(-10, 15, 2000, {.maxSpeed=50});
 chassis.turnToHeading(-45, 1250);   // timeout was 1000
-chassis.moveToPoint(-59, 59, 8000, {.maxSpeed=50});   // timeout was 4000
+chassis.moveToPoint(-62, 62, 8000, {.maxSpeed=50});   // timeout was 4000
 moveArmAuton(90);
 setLiftTarget(90);
 chassis.waitUntilDone();
-setLiftTarget(40);
- pros::delay(1000);
+setLiftTarget(20);
+ pros::delay(500);
    claw.move_voltage(-12000);
-   pros::delay(1000);
-   claw.move_voltage(0);
    
 /*
 
@@ -2151,24 +2188,32 @@ const double SEQ_ARM_FLIP_ROT  = 900;   // total rotation from start to fully fl
 const double ARM_UP_ROT_EMPTY  = 500;   // TODO: R2, arm up about 90 degrees, no pin
 const double ARM_UP_ROT_HELD   = 500;   // TODO: L2, arm up about 90 degrees, holding a pin
 const double LIFT_SETTLE_TOL   = 3.0;   // lift degrees
-const uint32_t SEQ_RELEASE_MS  = 600;   // how long the claw spins in reverse to let go
-const uint32_t SEQ_LIFT_DELAY_MS = 500; // 350 lift waits this long after the arm starts moving
-const uint32_t SEQ_FLIP_DELAY_MS = 150; // after the lift reaches height, wait this long before the arm flips (was hardcoded)
+const uint32_t SEQ_RELEASE_MS  = 92;    // how long the claw spins in reverse to let go
+const uint32_t SEQ_LIFT_DELAY_MS = 153; // lift waits this long after the arm starts moving
+const uint32_t SEQ_FLIP_DELAY_MS = 46;  // after the lift reaches height, wait this long before the arm flips
 const double   SEQ_FLIP_LIFT_TOL = 20.0;    // arm starts flipping once the lift is within this many degrees of its height (LIFT_SETTLE_TOL is too strict here)
 const uint32_t SEQ_RAISE_TIMEOUT_MS = 1500; // flip anyway if the lift/arm have not got there after this long (was 4000)
 const int32_t  SEQ_FLIP_VOLTAGE      = 12000; // arm voltage during the flip (full power, same as the other arm moves)
 const int32_t  SEQ_FLIP_HOLD_VOLTAGE = 5500;  //4000 arm keeps pressing down with this once it is flipped (same as auton hold)
-const uint32_t SEQ_ARM_SETTLE_MS = 200; // after the arm reaches the flip position, wait this long before the lift lowers
-const uint32_t SEQ_PRE_RELEASE_MS = 50; // after the lift lowers, wait at least this long before the claw lets go
+const uint32_t SEQ_ARM_SETTLE_MS = 61;  // after the arm reaches the flip position, wait this long before the lift lowers
+const uint32_t SEQ_PRE_RELEASE_MS = 8;  // after the lift lowers, wait at least this long before the claw lets go
+
+// Alliance pin 1 is arm-only. Keep its original timing from before the other
+// scoring sequences were shortened.
+const uint32_t ALLIANCE_PIN1_FLIP_DELAY_MS = 150;
+const uint32_t ALLIANCE_PIN1_ARM_SETTLE_MS = 200;
+const uint32_t ALLIANCE_PIN1_RELEASE_MS = 600;
+const uint32_t ALLIANCE_PIN1_RESET_ARM_BACK_DELAY_MS = 850;
+const uint32_t ALLIANCE_PIN1_RESET_BACK_MIN_MS = 200;
 
 // Reset. The arm flips back to straight up (the position it was raised to) while
 // the lift starts descending. After SEQ_RESET_ARM_BACK_DELAY_MS the arm continues
 // back to its resting position. The reset ends when the lift is down and the arm
 // has stopped; the max is only a safety net.
-const uint32_t SEQ_RESET_ARM_BACK_DELAY_MS = 850;   //700 arm stops at upright this long, then continues back
+const uint32_t SEQ_RESET_ARM_BACK_DELAY_MS = 260;   // arm stops at upright this long, then continues back
 const int32_t  SEQ_RESET_ARM_UP_VOLTAGE    = 12000; // arm voltage flipping back to straight up
 const int32_t  SEQ_RESET_ARM_BACK_VOLTAGE  = 6000;  // arm voltage for the final move back (was -6000)
-const uint32_t SEQ_RESET_BACK_MIN_MS = 200;   // after the arm starts going back, never finish before this
+const uint32_t SEQ_RESET_BACK_MIN_MS = 61;    // after the arm starts going back, never finish before this
 const uint32_t SEQ_RESET_MAX_MS = 1500;       // backup timeout
 const uint32_t SEQ_QUICK_RESET_MAX_MS = 2500; // L1 quick reset: safety timeout (longer, the lift may start from the top)
 const double   SEQ_RESET_LIFT_DONE_DEG = 5.0; // lift counts as "all the way down" at or below this
@@ -2306,7 +2351,7 @@ void updateSequence() {
         if (seqNoLift) {
             // No lift to wait for. Flip as soon as the arm is up (or the same
             // safety timeout as the normal sequence).
-            if ((seqArmHeld && t >= SEQ_FLIP_DELAY_MS) || t >= SEQ_RAISE_TIMEOUT_MS) {
+            if ((seqArmHeld && t >= ALLIANCE_PIN1_FLIP_DELAY_MS) || t >= SEQ_RAISE_TIMEOUT_MS) {
                 arm.move_voltage(SEQ_FLIP_VOLTAGE);
                 seqFlipArrive = 0;
                 seqEnter(SEQ_FLIP);
@@ -2353,7 +2398,8 @@ void updateSequence() {
             arm.move_voltage(SEQ_FLIP_HOLD_VOLTAGE);
         }
         const bool armSettled = seqFlipArrive != 0 &&
-                                pros::millis() - seqFlipArrive >= SEQ_ARM_SETTLE_MS;
+                                pros::millis() - seqFlipArrive >=
+                                    (seqNoLift ? ALLIANCE_PIN1_ARM_SETTLE_MS : SEQ_ARM_SETTLE_MS);
         if (armSettled || t >= 3000) {
             seqFlipArrive = 0;
             arm.move_voltage(SEQ_FLIP_HOLD_VOLTAGE);   // keep pressing down through lower + release
@@ -2370,12 +2416,12 @@ void updateSequence() {
         break;
     }
     case SEQ_LOWER:
-        if ((t >= SEQ_PRE_RELEASE_MS && liftSettled()) || t >= 2500) seqEnter(SEQ_RELEASE);
+        if ((t >= SEQ_PRE_RELEASE_MS && liftSettled()) || t >= 383) seqEnter(SEQ_RELEASE);
         break;
 
     case SEQ_RELEASE:
         // claw reverse is applied in the claw section of opcontrol
-        if (t >= SEQ_RELEASE_MS) {
+        if (t >= (seqNoLift ? ALLIANCE_PIN1_RELEASE_MS : SEQ_RELEASE_MS)) {
             if (seqDoBackup) {
                 // Drive back first, the reset starts when that ends.
                 seqBackupStart = chassis.getPose();
@@ -2429,7 +2475,9 @@ void updateSequence() {
         // Arm first flips back to straight up (where it was raised to) while the
         // lift descends. After SEQ_RESET_ARM_BACK_DELAY_MS it continues back.
         // The L1 quick reset skips that and sends the arm straight back.
-        const bool armBackPhase = seqResetNow || t >= SEQ_RESET_ARM_BACK_DELAY_MS;
+        const uint32_t armBackDelay = seqNoLift ? ALLIANCE_PIN1_RESET_ARM_BACK_DELAY_MS
+                                                : SEQ_RESET_ARM_BACK_DELAY_MS;
+        const bool armBackPhase = seqResetNow || t >= armBackDelay;
         if (!armBackPhase) {
             const double upright = seqBaseArm + SEQ_ARM_RAISE_ROT;
             if (arm.get_position() > upright + 5.0) arm.move_voltage(-SEQ_RESET_ARM_UP_VOLTAGE);
@@ -2443,8 +2491,10 @@ void updateSequence() {
         getLiftAngle();
         const bool liftDown   = seqNoLift || (liftSensorOK && liftAngleNow <= SEQ_RESET_LIFT_DONE_DEG);
         const bool armStopped = std::fabs(arm.get_actual_velocity()) < 5.0;
-        const uint32_t backStart = seqResetNow ? 0 : SEQ_RESET_ARM_BACK_DELAY_MS;
-        const bool backLongEnough = t >= backStart + SEQ_RESET_BACK_MIN_MS;
+        const uint32_t backStart = seqResetNow ? 0 : armBackDelay;
+        const uint32_t backMin = seqNoLift ? ALLIANCE_PIN1_RESET_BACK_MIN_MS
+                                           : SEQ_RESET_BACK_MIN_MS;
+        const bool backLongEnough = t >= backStart + backMin;
         const uint32_t resetMax = seqResetNow ? SEQ_QUICK_RESET_MAX_MS : SEQ_RESET_MAX_MS;
 
         if ((backLongEnough && liftDown && armStopped) || t >= resetMax) {
