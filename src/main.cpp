@@ -1644,10 +1644,14 @@ void autonomous() {
     chassis.turnToHeading(-90, 1000);
     //* toggle motion + move to goal + score
     chassis.moveToPoint(20, 30, 2000, {.forwards=false});
+    chassis.moveToPoint(-10, 30, 3000);
+    chassis.turnToHeading(-120, 1000);
+    chassis.moveToPoint(-48, 12, 3000);
+    chassis.turnToHeading(-45, 1000);
         //? Ascend Phase
         setLiftTarget(150);
         //? Move Phase
-        //TODO make the move to center based on available scoring angle
+        chassis.moveToPoint(-48, 24, 3000);
         //? Descend Phase
         setLiftTarget(110);
             while (!liftSettled()) {
@@ -1656,7 +1660,7 @@ void autonomous() {
             claw.move_voltage(-12000);
             pros::delay(300);
         //* confirm by moving away from pin
-        //TODO Based on aoa
+        chassis.moveToPoint(-44, 8, 4000);
     
 
 
