@@ -29,22 +29,22 @@
 
 // =====================================================================
 // AUTONOMOUS MODE
-//   0 = normal autonomous
-//   1 = Object ID / yellow finder. autonomous() does NOTHING except read the AI
-//       Vision sensor and show the blobs it sees (brain screen lines 0-3,
-//       controller line 0, and the PROS terminal). Point the rear sensor at a
-//       pin, run autonomous, and check that it is boxed steadily. If it is not,
-//       tune the AIV_YELLOW_* numbers below. Read AIV_PIN_CLASS_ID off here.
-//   2 = Pin tracking demo. The robot rotates IN PLACE to keep the pin on the
-//       drivetrain centreline. It never drives forward or backward.
-//   3 = Empty autonomous branch for future testing.
-// Set back to 0 when you are done.
+//   0 = Skills autonomous. Runs the complete long routine, including the
+//       loader returns, third/fourth pin cycles, and final scoring run.
+//   1 = Match left-side autonomous. Runs the opening left-side scoring route
+//       and stops before the standalone-skills extension.
+//   2 = Basic right-side autonomous. Runs the shorter right-side match routine.
+//   3 = AI Vision object finder. Reads the rear AI Vision sensor and displays
+//       detected object classes/boxes; the robot does not move.
+//   4 = Yellow pin tracking. Rotates in place to keep a yellow pin centered;
+//       the robot never drives forward or backward.
+// Set AUTON_MODE to the mode you want to run. Default is Skills (0).
 //
 // This macro is read in three places, not just autonomous(): aivInit() picks the
 // detection type from it, and the screen task switches its layout on it. All
 // three have to agree.
 // =====================================================================
-#define AUTON_MODE 3
+#define AUTON_MODE 0
 
 
 // controller
@@ -87,7 +87,7 @@ lemlib::TrackingWheel vertical(&verticalEnc, 2, -0.5);
 
 
 lemlib::Drivetrain drivetrain(&leftMotors, &rightMotors, 14,
-                             lemlib::Omniwheel::OLD_325, 333, 8);
+                             lemlib::Omniwheel::OLD_325, 333, 2);
 
 
 // ControllerSettings(kP, kI, kD, windupRange, smallError, smallErrorTimeout,
@@ -478,7 +478,7 @@ const int    AIV_YELLOW_SIG_ID   = 1;      // color signature ID for yellow (1-7
 const bool   AIV_SET_COLOR_IN_CODE = true; // true = this program defines the yellow signature itself
                                            // false = use whatever the AI Vision utility saved
 const bool   AIV_USE_GAME_MODEL  = true;   // true = game element AI model, false = color signature
-const int    AIV_PIN_CLASS_ID    = 4;      // class ID of the pin in the game model (found with AUTON_MODE 1)
+const int    AIV_PIN_CLASS_ID    = 4;      // class ID of the pin in the game model (found with AUTON_MODE 3)
                                            // used when AIV_USE_GAME_MODEL is true
 
 // ---- geometry ----
@@ -531,7 +531,7 @@ void aivSetSteering(double kp, double maxSteer) {
 void aivInit() {
     aivision.reset();
     // The class id finder needs the AI model objects on, whatever AIV_USE_GAME_MODEL says.
-    aivision.enable_detection_types((AIV_USE_GAME_MODEL || AUTON_MODE == 1)
+    aivision.enable_detection_types((AIV_USE_GAME_MODEL || AUTON_MODE == 3)
                                         ? pros::AivisionModeType::objects
                                         : pros::AivisionModeType::colors);
     if (!AIV_USE_GAME_MODEL && AIV_SET_COLOR_IN_CODE) {
@@ -866,7 +866,7 @@ AivEnd driveBackToPin(double maxDistanceIn, int timeoutMs,
 // forward or backward: both sides always get equal and opposite commands, so the
 // only motion possible is rotation about the robot's own centre.
 //
-// Only used by AUTON_MODE 2. Nothing in normal autonomous or driver control
+// Only used by AUTON_MODE 4. Nothing in normal autonomous or driver control
 // calls it, and it touches only the drive motors.
 //
 // THE MATHS (aim for the middle of the ROBOT, not the middle of the camera)
@@ -1207,9 +1207,9 @@ void initialize() {
        // X/Y are inches relative to the origin set by chassis.setPose().
        const lemlib::Pose pose = chassis.getPose();
        // Keep these readings visible in every tuning mode.
-// Must stay == 1, not a bare truthiness test: AUTON_MODE 2 is the tracking demo
-// and wants the normal pose/lift layout, not the finder's.
-#if AUTON_MODE == 1
+// The finder needs its own screen layout; the competition modes and
+// pin-tracking demo use the normal pose/lift layout.
+#if AUTON_MODE == 3
        // Class id finder: lines 0-3 show what the AI Vision sensor sees.
        pros::lcd::set_text(0, fmt::format("AIV objects: {}  (finder mode)", aivSeenCount));
        for (int i = 0; i < AIV_SEEN_MAX; i++) {
@@ -1286,8 +1286,8 @@ const int32_t ARM_HOLD_VOLTAGE = 3500;
 
         // Trigger the lift when the arm crosses 30 degrees.
         if (!liftTriggered &&
-            ((targetAngle > 0 && currentPos >= 30.0) ||
-             (targetAngle < 0 && currentPos <= -30.0))) {
+            ((targetAngle > 0 && currentPos >= -60.0) ||
+             (targetAngle < 0 && currentPos <= 60.0))) {
             setLiftTarget(liftPeakAngle);
             liftTriggered = true;
         }
@@ -1367,8 +1367,434 @@ void runR2Sequence() {
     enableLiftPID();
 }
 
+bool liftSettled();
+
+// Wait until the arm reaches the requested position.
+void waitForArmAngle(double targetDegrees) {
+    while (std::fabs(arm.get_position() - targetDegrees) >
+           ARM_TARGET_TOLERANCE) {
+        pros::delay(10);
+    }
+}
+
+// TODO test this
+//? Test this
+//* Test This
+//! Test This
+inline void orbitGoal(double sweepDeg, int dir, double press = 30, double leadDeg = 20,
+                      double rateDps = 60, double counter = 0.5, int timeoutMs = 3000) {
+    const double kP = 2.5, kD = 6.0;
+    const int settleMs = 250;
+
+    auto wrap180 = [](double a) {
+        while (a > 180) a -= 360;
+        while (a <= -180) a += 360;
+        return a;
+    };
+
+    const double theta0 = chassis.getPose().theta;
+    const double total = sweepDeg + leadDeg; // lead shrinks to zero by the end
+    const uint32_t t0 = pros::millis();
+    uint32_t doneAt = 0;
+    double prevErr = 0;
+
+    while (pros::millis() - t0 < (uint32_t)timeoutMs) {
+        double ramp = std::min(rateDps * (pros::millis() - t0) / 1000.0, total);
+        double target = theta0 + dir * (ramp - leadDeg);
+        double err = wrap180(target - chassis.getPose().theta);
+
+        double turn = kP * err + kD * (err - prevErr); // + = clockwise
+        prevErr = err;
+
+        // Driving side goes forward; the other side runs opposite at `counter` of that power.
+        double drive = std::fabs(turn);
+        double back = -counter * drive;
+        double l = std::clamp(press + (turn >= 0 ? drive : back), -127.0, 127.0);
+        double r = std::clamp(press + (turn >= 0 ? back : drive), -127.0, 127.0);
+        chassis.tank((int)l, (int)r, true);
+
+        if (ramp >= total) {
+            if (!doneAt) doneAt = pros::millis();
+            if (pros::millis() - doneAt > (uint32_t)settleMs) break;
+        }
+        pros::delay(10);
+    }
+    chassis.tank(0, 0, true);
+}
+
 void autonomous() {
-#if AUTON_MODE == 1
+#if AUTON_MODE == 0
+
+   // =================================================================
+   // MODE 0: SKILLS AUTONOMOUS
+   // =================================================================
+
+    //! Lift specifications
+    liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    liftAutonomousMode = true;
+    enableLiftPID();
+
+    //! initial pose + claw
+    chassis.setPose(0, 0, 180);
+    claw.move_voltage(12000);
+
+    //! pulls toggle out
+    setLiftTarget(145);
+    chassis.moveToPoint(0, 8, 750, {.forwards=false, .minSpeed = 33});
+    moveArmAuton(90);
+    chassis.waitUntilDone();
+
+    //! flips the toggle
+    setLiftTarget(0);
+    chassis.turnToHeading(0, 750, {.maxSpeed=60});
+    chassis.moveToPoint(0, -4, 1500, {.forwards = false, .minSpeed = 33});
+    pros::delay(1000);
+    moveArmAuton(-90);
+
+    //! Scores preload
+        //? Move Phase
+        chassis.moveToPoint(0, 20, 3000);
+        chassis.turnToHeading(-90, 750, {.maxSpeed=80});
+        chassis.moveToPoint(-20, 20, 3000);
+        setLiftTarget(50);
+        chassis.waitUntilDone();
+        //? Descend Phase
+        setLiftTarget(20);
+        while (!liftSettled()) {
+            pros::delay(10);
+        }
+        claw.move_voltage(-12000);
+        pros::delay(300);
+    
+    //! Reanchor at goal for orbit
+    //TODO move to goal and perform orbit maneuver
+    moveArmAuton(-90);
+    claw.move_voltage(12000);
+
+    //! Scores pin 1
+    //Todo whatever position just +y to grab pin
+        //? Ascend Phase
+        moveArmAutonWithLiftTrigger(90, 30);
+        //? Move Phase
+        //Todo return to goal
+        chassis.waitUntilDone();
+        //? Descend Phase
+        setLiftTarget(0);
+        while (!liftSettled()) {
+            pros::delay(10);
+        }
+        claw.move_voltage(-12000);
+        pros::delay(300);
+
+    //! orbit manuever
+    //Todo perform orbit maneuver
+
+    //! Score pin 2
+    //Todo whatever position just +x
+    chassis.waitUntil(2);
+    moveArmAuton(-90);
+    setLiftTarget(0);
+    chassis.waitUntil(4);
+    claw.move_voltage(12000);
+    chassis.waitUntilDone();
+        //? Ascend Phase
+        moveArmAutonWithLiftTrigger(90, 50);
+        //? Move Phase
+        //todo return to goal
+        chassis.waitUntilDone();
+        //? Descend Phase
+        setLiftTarget(30);
+        while (!liftSettled()) {
+            pros::delay(10);
+        }
+        claw.move_voltage(-12000);
+        pros::delay(300);
+    
+    //! Dont mess with index 0 its js there to make it easier for us to start list at 1
+    //Todo double check lift heights
+    const double RAISE_HEIGHTS[5] = {0, 0, 70, 150, 210};
+    const double LOWER_HEIGHTS[5] = {0, 0, 20, 110, 150};
+    
+    for (int i=3; i<=4; i++) {
+        //! Return to Loader for pin i
+        //* reinit pose
+        chassis.setPose(0, 0, -90);
+        //* move back + Reset
+        chassis.moveToPoint(24, 0, 3000, {.forwards=false});
+        chassis.waitUntil(4);
+        setLiftTarget(0);
+        moveArmAuton(-90);
+        claw.move_voltage(12000);
+        //* turn + grab pin
+        chassis.turnToHeading(0, 1000);
+        chassis.moveToPoint(25, 18, 3000, {.forwards=false, .minSpeed=127, .earlyExitRange=6});
+        chassis.moveToPoint(25, 18, 3000, {.forwards=false, .maxSpeed=30});
+        chassis.waitUntilDone();
+
+        //! Score Pin i
+        //* Exit loader + turn
+        chassis.moveToPoint(24, 0, 3000);
+        chassis.turnToHeading(-90, 1000);
+            //? Ascend Phase
+            moveArmAutonWithLiftTrigger(90, RAISE_HEIGHTS[i]);
+            //? Move Phase
+            chassis.moveToPoint(0, 0, 3000);
+            chassis.waitUntilDone();
+            //? Descend Phase
+            setLiftTarget(LOWER_HEIGHTS[i]);
+            while (!liftSettled()) {
+                pros::delay(10);
+            }
+            claw.move_voltage(-12000);
+            pros::delay(300);
+    }
+
+    //! return to loader for pin
+    //* reinit pose
+    chassis.setPose(0, 0, -90);
+    //* move back + Reset
+    chassis.moveToPoint(24, 0, 3000, {.forwards=false});
+    chassis.waitUntil(4);
+    setLiftTarget(0);
+    moveArmAuton(-90);
+    claw.move_voltage(12000);
+    //* turn + grab pin
+    chassis.turnToHeading(0, 1000);
+    chassis.moveToPoint(25, 18, 3000, {.forwards=false, .minSpeed=127, .earlyExitRange=6});
+    chassis.moveToPoint(25, 18, 3000, {.forwards=false, .maxSpeed=30});
+    chassis.waitUntilDone();
+    
+    //! head to goal 2 for reset + init score
+    //* move back
+    chassis.moveToPoint(25, 42, 3000);
+        //? Ascend Phase
+        moveArmAutonWithLiftTrigger(90, 30);
+        //? Move Phase
+        chassis.turnToHeading(-45, 1000);
+        //TODO currently 10 inches diaganolly
+        chassis.moveToPoint(15, 52, 3000);
+        //? Descend Phase
+        setLiftTarget(0);
+        while (!liftSettled()) {
+            pros::delay(10);
+        }
+        claw.move_voltage(-12000);
+        pros::delay(300);
+
+    //! Goal 2 loop
+    for (int i=2; i<=4; i++) {
+        //! Return to Loader for pin i
+        //* reinit pose
+        chassis.setPose(0, 0, -45);
+        //* move back + Reset
+        //TODO currently 10in prob have to change
+        chassis.moveToPoint(10, -10, 3000, {.forwards=false});
+        chassis.waitUntil(4);
+        setLiftTarget(0);
+        moveArmAuton(-90);
+        claw.move_voltage(12000);
+        //* turn + grab pin
+        chassis.turnToHeading(0, 1000);
+        chassis.moveToPoint(10, -42, 3000, {.forwards=false, .minSpeed=127, .earlyExitRange=6});
+        chassis.moveToPoint(10, -42, 3000, {.forwards=false, .maxSpeed=30});
+        chassis.waitUntilDone();
+
+        //! Score Pin i
+        //* Exit loader + turn
+        chassis.moveToPoint(10, -10, 3000);
+        chassis.turnToHeading(-45, 1000);
+            //? Ascend Phase
+            moveArmAutonWithLiftTrigger(90, RAISE_HEIGHTS[i]);
+            //? Move Phase
+            chassis.moveToPoint(0, 0, 3000);
+            chassis.waitUntilDone();
+            //? Descend Phase
+            setLiftTarget(LOWER_HEIGHTS[i]);
+            while (!liftSettled()) {
+                pros::delay(10);
+            }
+            claw.move_voltage(-12000);
+            pros::delay(300);
+    }
+
+
+    //! Middle pin
+
+    //! Return to loader
+    //* reinit pose
+        chassis.setPose(0, 0, -45);
+        //* move back + Reset
+        //TODO currently 10in prob have to change
+        chassis.moveToPoint(10, -10, 3000, {.forwards=false});
+        chassis.waitUntil(4);
+        setLiftTarget(0);
+        moveArmAuton(-90);
+        claw.move_voltage(12000);
+        //* turn + grab pin
+        chassis.turnToHeading(0, 1000);
+        chassis.moveToPoint(10, -42, 3000, {.forwards=false, .minSpeed=127, .earlyExitRange=6});
+        chassis.moveToPoint(10, -42, 3000, {.forwards=false, .maxSpeed=30});
+        chassis.waitUntilDone();
+    
+    //! Move to toggle + toggle
+    //* move to toggle + turn + move arm
+    chassis.moveToPoint(10, 30, 5000);
+    moveArmAuton(90);
+    chassis.turnToHeading(-90, 1000);
+    //* toggle motion + move to goal + score
+    chassis.moveToPoint(20, 30, 2000, {.forwards=false});
+        //? Ascend Phase
+        setLiftTarget(150);
+        //? Move Phase
+        //TODO make the move to center based on available scoring angle
+        //? Descend Phase
+        setLiftTarget(110);
+            while (!liftSettled()) {
+                pros::delay(10);
+            }
+            claw.move_voltage(-12000);
+            pros::delay(300);
+        //* confirm by moving away from pin
+        //TODO Based on aoa
+    
+
+
+
+
+/*
+//third pin
+chassis.setPose(-62.253, -58.81, 90);
+
+chassis.moveToPoint(-62.253+13, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
+chassis.turnToHeading(0, 1750);   // timeout was 1000
+moveArmAuton(90);
+setLiftTarget(170);
+chassis.moveToPoint(-62.253+13, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
+chassis.waitUntilDone();
+setLiftTarget(110);
+ pros::delay(1000);
+   claw.move_voltage(-12000);
+   pros::delay(1000);
+
+//return to loader
+chassis.setPose(-47.223, -34.389, 0);
+chassis.moveToPoint(-47.223, -34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
+chassis.waitUntil(4);
+setLiftTarget(0);
+claw.move_voltage(12000);
+moveArmAuton(-90);
+chassis.turnToHeading(90, 1750);   // timeout was 1000
+chassis.moveToPoint(-46.223-18,-34.389-25, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
+pros::delay(1000);
+*/
+
+#elif AUTON_MODE == 1
+
+   // =================================================================
+   // MODE 1: MATCH LEFT-SIDE AUTONOMOUS
+   // Runs the opening left-side scoring route from the skills routine,
+   // but stops before the standalone-skills loader and extra-pin cycles.
+   // =================================================================
+
+liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+   liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+
+   liftAutonomousMode = true;
+   enableLiftPID();
+
+   
+   chassis.setPose(0, 0, 180);
+   
+
+   // Toggle roller while the claw runs.
+
+   setLiftTarget(145);
+   chassis.moveToPoint(0, 8, 750, {.forwards=false, .minSpeed = 33});
+   moveArmAuton(90);
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   chassis.turnToHeading(0, 750, {.maxSpeed=60});
+   chassis.moveToPoint(0, -4, 1500, {.forwards = false, .minSpeed = 33});
+   pros::delay(1000);
+   moveArmAuton(-90);
+
+
+   chassis.moveToPoint(5, 18, 1000, {.maxSpeed = 60});
+   
+   chassis.turnToHeading(225, 1000);
+   claw.move_voltage(12000);
+    chassis.moveToPoint(31, 44, 3000, {.forwards=false, .maxSpeed = 50});
+    claw.move_voltage(12000);
+    chassis.turnToHeading(180, 500);
+    moveArmAuton(90);
+    setLiftTarget(60);
+    chassis.moveToPoint(26, 20, 1000, {.maxSpeed = 60});
+    chassis.waitUntilDone();
+    setLiftTarget(0);
+    pros::delay(750);
+    claw.move_voltage(-12000);
+    pros::delay(500);
+    chassis.moveToPoint(24, 35, 3000, {.forwards=false, .maxSpeed = 50});
+    chassis.waitUntil(3);
+    claw.move_voltage(12000);
+    moveArmAuton(-90);
+    chassis.turnToHeading(315, 500);
+    chassis.moveToPoint(52, 6, 3000, {.forwards=false, .maxSpeed = 50});
+    pros::delay(500);
+    chassis.moveToPoint(47, 14, 5000, {.maxSpeed = 50});
+    chassis.turnToHeading(-90, 500);
+    moveArmAuton(90);
+    setLiftTarget(100);
+    chassis.moveToPoint(24, 14, 1000, {.maxSpeed = 60});
+    chassis.waitUntilDone();
+    setLiftTarget(60);
+    pros::delay(500);
+    claw.move_voltage(-12000);
+    pros::delay(2000);
+
+#elif AUTON_MODE == 2
+
+   // =================================================================
+   // MODE 2: BASIC RIGHT-SIDE AUTONOMOUS
+   // =================================================================
+
+   liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+   liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+
+   liftAutonomousMode = true;
+   enableLiftPID();
+
+   
+   chassis.setPose(0, 0, 180);
+   claw.move_voltage(12000);
+   
+
+   // Toggle roller while the claw runs.
+
+   setLiftTarget(145);
+   chassis.moveToPoint(0, 8, 750, {.forwards=false, .minSpeed = 33});
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   chassis.turnToHeading(0, 750, {.maxSpeed=60});
+   chassis.moveToPoint(0, -7, 1500, {.forwards = false, .minSpeed = 33});
+   pros::delay(1000);
+
+
+   setLiftTarget(60);
+   //chassis.moveToPose(-24, 12, -90, 3000, {.lead = 0.4, .maxSpeed = 60, .minSpeed = 30});
+
+   chassis.moveToPoint(0, 15, 1000, {.maxSpeed = 60});
+    chassis.turnToHeading(-90, 750);
+    chassis.moveToPoint(-25, 15, 1000, {.maxSpeed = 60});
+
+   moveArmAuton(90);
+   chassis.waitUntilDone();
+   setLiftTarget(0);
+   pros::delay(750);
+   claw.move_voltage(-12000);
+
+#elif AUTON_MODE == 3
 
    // YELLOW FINDER. Nothing on the robot moves. Point the rear AI Vision sensor
    // at a pin and watch it from any of:
@@ -1378,7 +1804,7 @@ void autonomous() {
    //   * the PROS terminal (pros terminal)
    // The pin should be boxed steadily. If it flickers or is missed, tune the
    // AIV_YELLOW_* numbers. If other yellow things get boxed, narrow them.
-   // Then set AUTON_MODE back to 0.
+   // Set AUTON_MODE back to 0 when finished.
    uint32_t lastReport = 0;
    while (true) {
        aivScanClasses();
@@ -1407,7 +1833,7 @@ void autonomous() {
        pros::delay(20);
    }
 
-#elif AUTON_MODE == 2
+#elif AUTON_MODE == 4
 
    // =================================================================
    // PIN TRACKING DEMO v2 - YELLOW COLOUR DETECTION, SYMMETRIC TURN
@@ -1460,7 +1886,7 @@ void autonomous() {
    // IF IT TURNS THE WRONG WAY: set TRK_SIGN to -1. That is the only sign in
    // here, and it flips both directions together.
 
-   // ---- tuning (all of it, mode 2 only, nothing outside this branch) ----
+   // ---- tuning (all of it, mode 4 only, nothing outside this branch) ----
    const int    TRK_SIG_ID        = AIV_YELLOW_SIG_ID;  // colour slot this demo programs
    const double TRK_MIN_W_PX      = 5.0;    // ignore yellow specks narrower than this
    const double TRK_MERGE_FACTOR  = 1.5;    // merge yellow boxes within this x the winner's width
@@ -1534,7 +1960,7 @@ void autonomous() {
 
    // aivInit() turned ON the AI game model, because AIV_USE_GAME_MODEL is true.
    // This demo wants colour blobs, so it switches the sensor over here. Only
-   // AUTON_MODE 2 ever runs this, so the game model is left alone everywhere else.
+   // AUTON_MODE 4 ever runs this, so the game model is left alone everywhere else.
    aivision.enable_detection_types(pros::AivisionModeType::colors);
    {
        // Loose on purpose. hue_range and saturation_range are the "margin of
@@ -1773,350 +2199,6 @@ void autonomous() {
    }
 
 #endif   // old v1 pin tracker
-
-#elif AUTON_MODE == 3
-
-   liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-   liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-
-   liftAutonomousMode = true;
-   enableLiftPID();
-
-   
-   chassis.setPose(0, 0, 180);
-   claw.move_voltage(12000);
-   
-
-   // Toggle roller while the claw runs.
-
-   setLiftTarget(145);
-   chassis.moveToPoint(0, 8, 750, {.forwards=false, .minSpeed = 33});
-   chassis.waitUntilDone();
-   setLiftTarget(0);
-   chassis.turnToHeading(0, 750, {.maxSpeed=60});
-   chassis.moveToPoint(0, -7, 1500, {.forwards = false, .minSpeed = 33});
-   pros::delay(1000);
-
-
-   setLiftTarget(60);
-   //chassis.moveToPose(-24, 12, -90, 3000, {.lead = 0.4, .maxSpeed = 60, .minSpeed = 30});
-
-   chassis.moveToPoint(0, 15, 1000, {.maxSpeed = 60});
-    chassis.turnToHeading(-90, 750);
-    chassis.moveToPoint(-25, 15, 1000, {.maxSpeed = 60});
-
-   moveArmAuton(90);
-   chassis.waitUntilDone();
-   setLiftTarget(0);
-   pros::delay(750);
-   claw.move_voltage(-12000);
-
-#else
-/*
-   liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-   liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-
-   liftAutonomousMode = true;
-   enableLiftPID();
-
-   // Arm down so the claw is at pickup height, claw spinning to take the pin in.
-   
-   chassis.setPose(0, 0, 180);
-   claw.move_voltage(12000);
-
-   // Toggle roller while the claw runs.
-
-   setLiftTarget(145);
-   chassis.moveToPoint(0, 8, 1000, {.forwards=false, .minSpeed = 33});   // timeout was 750
-   chassis.waitUntilDone();
-   
-   setLiftTarget(0);
-   chassis.turnToHeading(0, 4500, {.maxSpeed=60});   // timeout was 1000
-   
-   chassis.moveToPoint(0, -5, 1250, {.forwards = false, .minSpeed = 33});   // timeout was 1000
-  
-
-
-   chassis.moveToPoint(5, 18, 3000, {.maxSpeed = 60});   // timeout was 1000
-   chassis.waitUntil(4);
-    moveArmAuton(-90);
-   
-   chassis.turnToHeading(235, 2000);   // timeout was 1000
-   chassis.waitUntilDone();
-   aivSetDriveSpeed(50);
-AivEnd pinEnd = driveBackToPin(48, 10000, 50, 6, 750);
-pros::delay(500);
-
-   chassis.turnToHeading(180, 1250);   // timeout was 500
-    moveArmAuton(90);
-    setLiftTarget(60);
-    chassis.moveToPoint(26, 24, 2500, {.maxSpeed = 60});
-    chassis.waitUntilDone();
-    setLiftTarget(0);
-    pros::delay(750);
-    claw.move_voltage(-12000);
-    pros::delay(500);
-    chassis.moveToPoint(24, 35, 3000, {.forwards=false, .maxSpeed = 50});
-    chassis.waitUntil(3);
-    claw.move_voltage(12000);
-    moveArmAuton(-90);
-    chassis.turnToHeading(305, 2000);   // timeout was 1000
-    chassis.waitUntilDone();
-   aivSetDriveSpeed(50);
-    AivEnd pinEnd2 = driveBackToPin(30, 10000, 50, 6, 1000);
-    pros::delay(500);
-    chassis.turnToHeading(0, 1250);   // timeout was 500
-    chassis.moveToPoint(50, 13, 4000, {.maxSpeed = 60});   // timeout was 1000
-    chassis.turnToHeading(-90, 1750);   // timeout was 500
-    moveArmAuton(90);
-    setLiftTarget(100);
-    chassis.moveToPoint(24, 13, 3250, {.maxSpeed = 60});   // timeout was 1000
-    chassis.waitUntilDone();
-    
-    setLiftTarget(60);
-    
-    chassis.setPose(24,12,-90);
-    pros::delay(500);
-    claw.move_voltage(-12000);
-    chassis.moveToPoint(27, 12, 1000, {.forwards=false, .maxSpeed = 50});
-    pros::delay(1200);
-*/
-
-liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-   liftRight.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-
-   liftAutonomousMode = true;
-   enableLiftPID();
-
-   
-   chassis.setPose(0, 0, 180);
-   
-
-   // Toggle roller while the claw runs.
-
-   setLiftTarget(145);
-   chassis.moveToPoint(0, 8, 750, {.forwards=false, .minSpeed = 33});
-   moveArmAuton(90);
-   chassis.waitUntilDone();
-   setLiftTarget(0);
-   chassis.turnToHeading(0, 750, {.maxSpeed=60});
-   chassis.moveToPoint(0, -4, 1500, {.forwards = false, .minSpeed = 33});
-   pros::delay(1000);
-   moveArmAuton(-90);
-
-
-   chassis.moveToPoint(5, 18, 1000, {.maxSpeed = 60});
-   
-   chassis.turnToHeading(225, 1000);
-   claw.move_voltage(12000);
-    chassis.moveToPoint(31, 44, 3000, {.forwards=false, .maxSpeed = 50});
-    claw.move_voltage(12000);
-    chassis.turnToHeading(180, 500);
-    moveArmAuton(90);
-    setLiftTarget(60);
-    chassis.moveToPoint(26, 20, 1000, {.maxSpeed = 60});
-    chassis.waitUntilDone();
-    setLiftTarget(0);
-    pros::delay(750);
-    claw.move_voltage(-12000);
-    pros::delay(500);
-    chassis.moveToPoint(24, 35, 3000, {.forwards=false, .maxSpeed = 50});
-    chassis.waitUntil(3);
-    claw.move_voltage(12000);
-    moveArmAuton(-90);
-    chassis.turnToHeading(315, 500);
-    chassis.moveToPoint(52, 6, 3000, {.forwards=false, .maxSpeed = 50});
-    pros::delay(500);
-    chassis.moveToPoint(47, 14, 5000, {.maxSpeed = 50});
-    chassis.turnToHeading(-90, 500);
-    moveArmAuton(90);
-    setLiftTarget(100);
-    chassis.moveToPoint(24, 14, 1000, {.maxSpeed = 60});
-    chassis.waitUntilDone();
-    setLiftTarget(60);
-    pros::delay(500);
-    claw.move_voltage(-12000);
-    pros::delay(2000);
-    
-   //standalone skills
-
-   //return to loader
-   claw.move_voltage(0);
-chassis.setPose(-47.223, -34.389, 0);
-chassis.moveToPoint(-47.223, -34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
-chassis.waitUntil(4);
-setLiftTarget(0);
-claw.move_voltage(12000);
-moveArmAuton(-90);
-chassis.turnToHeading(90, 1750);   // timeout was 1000
-chassis.moveToPoint(-46.223-18,-34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
-pros::delay(1000);
-
-//third pin
-chassis.setPose(-62.253, -58.81, 90);
-
-chassis.moveToPoint(-62.253+13, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
-chassis.turnToHeading(0, 1750);   // timeout was 1000
-moveArmAuton(90);
-setLiftTarget(170);
-chassis.moveToPoint(-62.253+13, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
-chassis.waitUntilDone();
-setLiftTarget(110);
- pros::delay(1000);
-   claw.move_voltage(-12000);
-   pros::delay(1000);
-
-//return to loader
-chassis.setPose(-47.223, -34.389, 0);
-chassis.moveToPoint(-47.223, -34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
-chassis.waitUntil(4);
-setLiftTarget(0);
-claw.move_voltage(12000);
-moveArmAuton(-90);
-chassis.turnToHeading(90, 1750);   // timeout was 1000
-chassis.moveToPoint(-46.223-18,-34.389-25, 2000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
-pros::delay(1000);
-
-//fourth pin
-chassis.setPose(-62.253, -58.81, 90);
-
-chassis.moveToPoint(-62.253+13, -58.81, 2000, {.maxSpeed=50, .minSpeed=30});
-chassis.turnToHeading(0, 1750);   // timeout was 1000
-moveArmAuton(90);
-setLiftTarget(190);
-chassis.moveToPoint(-62.253+13, -58.81+27, 3750, {.maxSpeed=50, .minSpeed=30});   // timeout was 2000
-chassis.waitUntilDone();
-setLiftTarget(150);
- pros::delay(1000);
-   claw.move_voltage(-12000);
-   pros::delay(1000);
-
-//back to loader
-chassis.setPose(-47.223, -34.389, 0);
-chassis.moveToPoint(-47.223, -34.389-24, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
-chassis.waitUntil(4);
-setLiftTarget(0);
-claw.move_voltage(12000);
-moveArmAuton(-90);
-chassis.turnToHeading(90, 1750);   // timeout was 1000
-chassis.moveToPoint(-46.223-17.5,-34.389-25, 3000, {.forwards=false, .maxSpeed=50, .minSpeed=30});   // timeout was 1500
-pros::delay(1000);
-
-
-
-chassis.setPose(0,0,0);
-chassis.moveToPoint(0, 15, 2500, {.maxSpeed=50});   // timeout was 2000
-chassis.turnToHeading(-90, 1750);   // timeout was 1000
-chassis.moveToPoint(-10, 15, 2000, {.maxSpeed=50});
-chassis.turnToHeading(-45, 1250);   // timeout was 1000
-chassis.moveToPoint(-62, 62, 8000, {.maxSpeed=50});   // timeout was 4000
-moveArmAuton(90);
-setLiftTarget(90);
-chassis.waitUntilDone();
-setLiftTarget(20);
- pros::delay(500);
-   claw.move_voltage(-12000);
-   
-/*
-
-
-
-   // =====================================================================
-   // PID TUNING TEST  (AUTON_MODE 0)
-   // =====================================================================
-   // Repeats one motion several times from the same start and reports how far
-   // off it finished each time. Tune against the SPREAD of the numbers, not a
-   // single run: one run cannot tell a gain problem from a bad launch.
-   //
-   //   TUNE_TEST 0 = turn test      (tune angularController with this)
-   //   TUNE_TEST 1 = straight drive (tune linearController, only after turns)
-   //   TUNE_TEST 2 = spin in place  (measures the tracking wheel offset)
-   //
-   // TEST 2: a full 360 moves the robot nowhere, so any position the odometry
-   // reports afterwards is error from the vertical tracking wheel's offset
-   // being wrong. A wheel mounted d inches off the centre line sweeps an arc of
-   // 2*pi*d per rotation, so  offset = drift / (2*pi*rotations).  Put that
-   // number in the third argument of the TrackingWheel constructor.
-   //
-   // Controller screen, after each rep:  "n) err <degrees or inches>"
-   // At the end:                         "worst <x>  avg <x>"  + a rumble.
-   // =====================================================================
-   const int      TUNE_TEST      = 0;      // 0 = turns, 1 = drive, 2 = spin
-   const int      TUNE_REPS      = 6;      // test 0/1: even number. test 2: full rotations
-   const double   TUNE_TURN_DEG  = 90.0;   // turn test: swings between 0 and this
-   const double   TUNE_DRIVE_IN  = 24.0;   // drive test: moves between 0 and this
-   const int      TUNE_DRIVE_SPD = 90;     // drive test: maxSpeed
-   const uint32_t TUNE_PAUSE_MS  = 1200;   // settle time before each reading
-
-   // Nothing but the drivetrain moves during a tuning run.
-   liftAutonomousMode = false;
-   liftPIDEnabled     = false;
-   liftLeft.brake();
-   liftRight.brake();
-   claw.brake();
-
-   auto tuneWrap = [](double a) {
-       while (a >  180.0) a -= 360.0;
-       while (a < -180.0) a += 360.0;
-       return a;
-   };
-
-   chassis.setPose(0, 0, 0);
-   pros::delay(500);
-
-   double tuneWorst = 0, tuneSum = 0;
-   double tuneSpinDrift = 0;   // TEST 2: inches the pose has wandered from the origin
-
-   for (int i = 0; i < TUNE_REPS; i++) {
-       double err = 0;
-
-       if (TUNE_TEST == 0) {
-           const double target = (i % 2 == 0) ? TUNE_TURN_DEG : 0.0;
-           chassis.turnToHeading(target, 4000);
-           chassis.waitUntilDone();
-           pros::delay(TUNE_PAUSE_MS);
-           err = tuneWrap(target - chassis.getPose().theta);
-       }
-       else if (TUNE_TEST == 1) {
-           const double target = (i % 2 == 0) ? TUNE_DRIVE_IN : 0.0;
-           chassis.moveToPoint(0, target, 5000, {.maxSpeed = TUNE_DRIVE_SPD});
-           chassis.waitUntilDone();
-           pros::delay(TUNE_PAUSE_MS);
-           err = target - chassis.getPose().y;
-       }
-       else {
-           // One full rotation, in four quarter turns so turnToHeading always
-           // has somewhere to go. Net rotation is 360, net travel is zero.
-           for (int q = 1; q <= 4; q++) {
-               chassis.turnToHeading(tuneWrap(q * 90.0), 4000);
-               chassis.waitUntilDone();
-           }
-           pros::delay(TUNE_PAUSE_MS);
-           const lemlib::Pose sp = chassis.getPose();
-           tuneSpinDrift = std::hypot(sp.x, sp.y);   // cumulative, never reset
-           err = tuneSpinDrift;
-       }
-
-       const double mag = std::fabs(err);
-       tuneSum += mag;
-       if (mag > tuneWorst) tuneWorst = mag;
-
-       controller.print(0, 0, "%d) err %+.2f    ", i + 1, err);
-       pros::delay(600);          // controller.print needs room between writes
-   }
-
-   controller.print(1, 0, "worst %.2f avg %.2f ",
-                    tuneWorst, tuneSum / (double)TUNE_REPS);
-   if (TUNE_TEST == 2) {
-       pros::delay(600);
-       controller.print(2, 0, "offset %.3f in   ",
-                        tuneSpinDrift / (2.0 * 3.14159265358979 * TUNE_REPS));
-   }
-   controller.rumble(".");
-   leftMotors.brake();
-   rightMotors.brake();
-
-   */
 
    #endif
 
