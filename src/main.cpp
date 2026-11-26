@@ -29,20 +29,17 @@
 
 // =====================================================================
 // AUTONOMOUS MODE
-//   0 = Skills autonomous. Runs the complete long routine, including the
-//       loader returns, third/fourth pin cycles, and final scoring run.
-//   1 = Match left-side autonomous. Runs the opening left-side scoring route
-//       and stops before the standalone-skills extension.
-//   2 = Basic right-side autonomous. Runs the shorter right-side match routine.
-//   3 = AI Vision object finder. Reads the rear AI Vision sensor and displays
-//       detected object classes/boxes; the robot does not move.
-//   4 = Yellow pin tracking. Rotates in place to keep a yellow pin centered;
-//       the robot never drives forward or backward.
+//   0 = Skills
+//   1 = Left Full
+//   2 = Right Full
+//   3 = Left Basic
+//   4 = Right Basic
+//   5 = AI Vision object finder
+//   6 = AI Vision pin tracking
 // Set AUTON_MODE to the mode you want to run. Default is Skills (0).
 //
-// This macro is read in three places, not just autonomous(): aivInit() picks the
-// detection type from it, and the screen task switches its layout on it. All
-// three have to agree.
+// This macro is also read by aivInit() and the screen task, so the AI Vision
+// mode numbers must stay synchronized in all three places.
 // =====================================================================
 #define AUTON_MODE 0
 
@@ -478,7 +475,7 @@ const int    AIV_YELLOW_SIG_ID   = 1;      // color signature ID for yellow (1-7
 const bool   AIV_SET_COLOR_IN_CODE = true; // true = this program defines the yellow signature itself
                                            // false = use whatever the AI Vision utility saved
 const bool   AIV_USE_GAME_MODEL  = true;   // true = game element AI model, false = color signature
-const int    AIV_PIN_CLASS_ID    = 4;      // class ID of the pin in the game model (found with AUTON_MODE 3)
+const int    AIV_PIN_CLASS_ID    = 4;      // class ID of the pin in the game model (found with AUTON_MODE 5)
                                            // used when AIV_USE_GAME_MODEL is true
 
 // ---- geometry ----
@@ -531,7 +528,7 @@ void aivSetSteering(double kp, double maxSteer) {
 void aivInit() {
     aivision.reset();
     // The class id finder needs the AI model objects on, whatever AIV_USE_GAME_MODEL says.
-    aivision.enable_detection_types((AIV_USE_GAME_MODEL || AUTON_MODE == 3)
+    aivision.enable_detection_types((AIV_USE_GAME_MODEL || AUTON_MODE == 5)
                                         ? pros::AivisionModeType::objects
                                         : pros::AivisionModeType::colors);
     if (!AIV_USE_GAME_MODEL && AIV_SET_COLOR_IN_CODE) {
@@ -866,7 +863,7 @@ AivEnd driveBackToPin(double maxDistanceIn, int timeoutMs,
 // forward or backward: both sides always get equal and opposite commands, so the
 // only motion possible is rotation about the robot's own centre.
 //
-// Only used by AUTON_MODE 4. Nothing in normal autonomous or driver control
+// Only used by AUTON_MODE 6. Nothing in normal autonomous or driver control
 // calls it, and it touches only the drive motors.
 //
 // THE MATHS (aim for the middle of the ROBOT, not the middle of the camera)
@@ -1209,7 +1206,7 @@ void initialize() {
        // Keep these readings visible in every tuning mode.
 // The finder needs its own screen layout; the competition modes and
 // pin-tracking demo use the normal pose/lift layout.
-#if AUTON_MODE == 3
+#if AUTON_MODE == 5
        // Class id finder: lines 0-3 show what the AI Vision sensor sees.
        pros::lcd::set_text(0, fmt::format("AIV objects: {}  (finder mode)", aivSeenCount));
        for (int i = 0; i < AIV_SEEN_MAX; i++) {
@@ -1759,8 +1756,18 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
 #elif AUTON_MODE == 2
 
+   // RIGHT FULL AUTONOMOUS
+   // Empty slot: add your own autonomous routine here.
+
+#elif AUTON_MODE == 3
+
+   // LEFT BASIC AUTONOMOUS
+   // Empty slot: add your own autonomous routine here.
+
+#elif AUTON_MODE == 4
+
    // =================================================================
-   // MODE 2: BASIC RIGHT-SIDE AUTONOMOUS
+   // MODE 4: BASIC RIGHT-SIDE AUTONOMOUS
    // =================================================================
 
    liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
@@ -1798,7 +1805,7 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
    pros::delay(750);
    claw.move_voltage(-12000);
 
-#elif AUTON_MODE == 3
+#elif AUTON_MODE == 5
 
    // YELLOW FINDER. Nothing on the robot moves. Point the rear AI Vision sensor
    // at a pin and watch it from any of:
@@ -1837,7 +1844,7 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
        pros::delay(20);
    }
 
-#elif AUTON_MODE == 4
+#elif AUTON_MODE == 6
 
    // =================================================================
    // PIN TRACKING DEMO v2 - YELLOW COLOUR DETECTION, SYMMETRIC TURN
@@ -1964,7 +1971,7 @@ liftLeft.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
    // aivInit() turned ON the AI game model, because AIV_USE_GAME_MODEL is true.
    // This demo wants colour blobs, so it switches the sensor over here. Only
-   // AUTON_MODE 4 ever runs this, so the game model is left alone everywhere else.
+   // AUTON_MODE 6 ever runs this, so the game model is left alone everywhere else.
    aivision.enable_detection_types(pros::AivisionModeType::colors);
    {
        // Loose on purpose. hue_range and saturation_range are the "margin of
